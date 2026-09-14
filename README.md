@@ -1,2 +1,1 @@
 # Condominium-Core
-hola yojas
