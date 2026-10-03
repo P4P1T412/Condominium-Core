@@ -1,0 +1,18 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Variables de entorno (nunca subir credenciales reales)
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# Build
+frontend/dist/
+backend/dist/
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/
+*.log
