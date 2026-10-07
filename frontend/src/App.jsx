@@ -8,6 +8,7 @@ import Pagos from "./modules/pagos/Pagos";
 import Notificaciones from "./modules/notificaciones/Notificaciones";
 import Garita from "./modules/seguridad/Garita";
 import ProtectedRoute from "./routes/ProtectedRoute";
+import UsuariosPage from "./modules/usuarios/UsuariosPage";
 
 export default function App() {
   return (
@@ -32,10 +33,7 @@ export default function App() {
             path="/usuarios"
             element={
               <ProtectedRoute allowedRoles={["administrador"]}>
-                <div style={{ padding: "20px" }}>
-                  <h2>Usuarios y Roles</h2>
-                  <p style={{ color: "#667085" }}>Módulo de administración de accesos y cuentas.</p>
-                </div>
+                <UsuariosPage />
               </ProtectedRoute>
             }
           />

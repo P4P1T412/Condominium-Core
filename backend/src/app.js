@@ -16,6 +16,7 @@ const casasRoutes = require("./modules/casas/casas.routes");
 const pagosRoutes = require("./modules/pagos/pagos.routes");
 const notificacionesRoutes = require("./modules/notificaciones/notificaciones.routes");
 const seguridadRoutes = require("./modules/seguridad/seguridad.routes");
+const usuariosRoutes = require("./modules/usuarios/usuarios.routes");
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use("/api/casas", casasRoutes);
 app.use("/api/pagos", pagosRoutes);
 app.use("/api/notificaciones", notificacionesRoutes);
 app.use("/api/seguridad", seguridadRoutes);
+app.use("/api/usuarios", usuariosRoutes);
 
 // Health check real contra Oracle (clave para demostración de fallas simuladas)
 app.get("/api/health", async (req, res, next) => {
