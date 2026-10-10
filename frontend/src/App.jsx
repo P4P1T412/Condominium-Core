@@ -3,6 +3,7 @@ import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import Home from "./components/Home";
 import Login from "./modules/auth/Login";
+import Registro from "./modules/auth/Registro";
 import CasasList from "./modules/casas/CasasPage";
 import Pagos from "./modules/pagos/Pagos";
 import Notificaciones from "./modules/notificaciones/Notificaciones";
@@ -17,6 +18,7 @@ export default function App() {
         {/* Rutas Públicas */}
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/registro" element={<Registro />} />
 
         {/* Rutas Protegidas en Layout con Sidebar */}
         <Route element={<Layout />}>

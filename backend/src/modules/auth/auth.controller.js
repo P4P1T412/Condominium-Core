@@ -10,6 +10,18 @@
 
 const authService = require("./auth.service");
 
+// Campos obligatorios del auto-registro público
+const CAMPOS_REGISTRO = [
+  "nombres",
+  "apellidos",
+  "dpi",
+  "telefono",
+  "correo",
+  "nombreUsuario",
+  "contrasena",
+];
+
+
 // Configuración centralizada de la cookie HTTP-Only
 const COOKIE_NAME = "token";
 const COOKIE_OPTIONS = {
@@ -53,6 +65,39 @@ async function login(req, res, next) {
 }
 
 /**
+ * Endpoint: POST /api/auth/registro
+ * Auto-registro público de un nuevo usuario. La cuenta queda INACTIVA y
+ * pendiente de aprobación por un administrador. No requiere JWT.
+ */
+async function registro(req, res, next) {
+  try {
+    // Validación defensiva de campos obligatorios
+    const faltantes = CAMPOS_REGISTRO.filter(
+      (campo) => !req.body?.[campo] || String(req.body[campo]).trim() === ""
+    );
+
+    if (faltantes.length > 0) {
+      return res.status(400).json({
+        success: false,
+        code: "MISSING_FIELDS",
+        message: `Debe completar todos los campos obligatorios: ${faltantes.join(", ")}.`,
+      });
+    }
+
+    const result = await authService.registerUser(req.body);
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "Solicitud enviada. Un administrador debe aprobar tu cuenta.",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Endpoint: POST /api/auth/logout
  * Elimina la cookie de sesión del cliente.
  */
@@ -89,6 +134,7 @@ async function getMe(req, res, next) {
 
 module.exports = {
   login,
+  registro,
   logout,
   getMe,
 };

@@ -9,8 +9,11 @@ router.use(requireRole("ADMINISTRADOR"));
 
 router.get("/", usuariosController.getUsuarios);
 router.get("/roles", usuariosController.getRoles);
+router.get("/pendientes", usuariosController.getPendientes);
 router.post("/", usuariosController.createUsuario);
 router.put("/:id/estado", usuariosController.updateEstado);
 router.put("/:id/rol", usuariosController.updateRol);
+router.put("/:id/aprobar", usuariosController.aprobar);
+router.delete("/:id/rechazar", usuariosController.rechazar);
 
 module.exports = router;

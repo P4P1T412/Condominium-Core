@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import api from "../../api/axios";
+import { Eye, EyeOff } from "lucide-react"; // Importamos los iconos de lucide-react
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false); // Estado para controlar la visibilidad de la contraseña
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -85,16 +87,28 @@ export default function Login() {
             <label htmlFor="password" style={styles.label}>
               Contraseña
             </label>
-            <input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              style={styles.input}
-              disabled={loading}
-            />
+            <div style={styles.passwordContainer}>
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"} // Cambia el tipo según el estado
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                style={styles.passwordInput}
+                disabled={loading}
+              />
+              {/* Botón para alternar la visibilidad */}
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={styles.toggleButton}
+                disabled={loading}
+                tabIndex="-1" // Evita que se enfoque con Tab para no interrumpir el flujo
+              >
+                {showPassword ? <EyeOff size={18} color="#6B7280" /> : <Eye size={18} color="#6B7280" />}
+              </button>
+            </div>
           </div>
 
           <button
@@ -114,6 +128,12 @@ export default function Login() {
           <Link to="/" style={styles.backLink}>
             ← Volver a la página principal
           </Link>
+          <p style={styles.registerHint}>
+            ¿No tienes cuenta?{" "}
+            <Link to="/registro" style={styles.registerLink}>
+              Solicita tu registro
+            </Link>
+          </p>
         </div>
       </div>
     </div>
@@ -137,6 +157,7 @@ const styles = {
     padding: "36px 32px",
     boxShadow: "0 4px 16px rgba(0, 0, 0, 0.08)",
     border: "1px solid var(--color-border, #E5E7EB)",
+    boxSizing: "border-box", // Prevenir desbordes
   },
   header: {
     marginBottom: "24px",
@@ -185,7 +206,39 @@ const styles = {
     fontSize: "14px",
     outline: "none",
     transition: "border-color 0.2s",
+    boxSizing: "border-box",
+    width: "100%",
   },
+  
+  // Nuevos estilos para contener el input de contraseña y el botón
+  passwordContainer: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    width: "100%",
+  },
+  passwordInput: {
+    width: "100%",
+    padding: "10px 40px 10px 14px", // Dejar espacio a la derecha para el botón
+    borderRadius: "8px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    fontSize: "14px",
+    outline: "none",
+    transition: "border-color 0.2s",
+    boxSizing: "border-box",
+  },
+  toggleButton: {
+    position: "absolute",
+    right: "12px",
+    background: "none",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   button: {
     padding: "12px",
     borderRadius: "8px",
@@ -204,6 +257,16 @@ const styles = {
   backLink: {
     fontSize: "13px",
     color: "var(--color-text-muted, #667085)",
+    textDecoration: "none",
+  },
+  registerHint: {
+    margin: "14px 0 0 0",
+    fontSize: "13px",
+    color: "var(--color-text-muted, #667085)",
+  },
+  registerLink: {
+    color: "var(--color-primary, #1B4B82)",
+    fontWeight: "600",
     textDecoration: "none",
   },
 };

@@ -1,22 +1,23 @@
 import Tabs from "../../components/Tabs";
+import SolicitudesPendientes from "./SolicitudesPendientes";
 import DirectorioCuentas from "./DirectorioCuentas";
-import AsignacionRoles from "./AsignacionRoles";
 
 /**
  * Módulo 3: Usuarios y Roles
- * Orquesta el directorio de accesos al sistema y el control de roles.
+ * Orquesta la aprobación de solicitudes de registro y el directorio de
+ * accesos al sistema (con asignación de roles integrada).
  */
 export default function UsuariosPage() {
   const tabs = [
     {
+      id: "solicitudes",
+      label: "Solicitudes Pendientes",
+      content: <SolicitudesPendientes />,
+    },
+    {
       id: "directorio",
       label: "Directorio de Cuentas",
       content: <DirectorioCuentas />,
-    },
-    {
-      id: "roles",
-      label: "Asignación de Roles",
-      content: <AsignacionRoles />,
     },
   ];
 
@@ -25,11 +26,12 @@ export default function UsuariosPage() {
       <header style={styles.header}>
         <h1 style={styles.title}>Usuarios y Accesos al Sistema</h1>
         <p style={styles.subtitle}>
-          Administración de cuentas con credenciales, suspensión de accesos y asignación de roles.
+          Administración de cuentas con credenciales, aprobación de registros,
+          suspensión de accesos y asignación de roles.
         </p>
       </header>
 
-      <Tabs tabs={tabs} defaultTab="directorio" />
+      <Tabs tabs={tabs} defaultTab="solicitudes" />
     </div>
   );
 }

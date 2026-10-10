@@ -5,6 +5,7 @@ const { verifyToken } = require("../../middlewares/auth.middleware");
 
 // Rutas Públicas
 router.post("/login", authController.login);
+router.post("/registro", authController.registro);
 router.post("/logout", authController.logout);
 
 // Rutas Protegidas por JWT
