@@ -1,0 +1,27 @@
+:root {
+  --color-bg: #F7F9FC;
+  --color-primary: #1B4B82;
+  --color-text: #101828;
+  --color-text-muted: #667085;
+  --color-border: #E5E7EB;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+a {
+  color: inherit;
+}
