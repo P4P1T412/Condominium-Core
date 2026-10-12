@@ -4,6 +4,8 @@ import Layout from "./components/Layout";
 import Home from "./components/Home";
 import Login from "./modules/auth/Login";
 import Registro from "./modules/auth/Registro";
+import OlvideContrasena from "./modules/auth/OlvideContrasena";
+import RestablecerContrasena from "./modules/auth/RestablecerContrasena";
 import CasasList from "./modules/casas/CasasPage";
 import Pagos from "./modules/pagos/Pagos";
 import Notificaciones from "./modules/notificaciones/Notificaciones";
@@ -19,6 +21,8 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/registro" element={<Registro />} />
+        <Route path="/olvide-contrasena" element={<OlvideContrasena />} />
+        <Route path="/restablecer-contrasena" element={<RestablecerContrasena />} />
 
         {/* Rutas Protegidas en Layout con Sidebar */}
         <Route element={<Layout />}>

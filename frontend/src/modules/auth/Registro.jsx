@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { User, Hash, Phone, Mail, Lock, Eye, EyeOff, CheckCircle2 } from "lucide-react";
 import api from "../../api/axios";
 
 export default function Registro() {
-  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     nombres: "",
     apellidos: "",
@@ -14,19 +13,39 @@ export default function Registro() {
     nombreUsuario: "",
     contrasena: "",
     confirmarContrasena: "",
+    codigoVerificacion: "",
   });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const [step, setStep] = useState(1); // 1 = Formulario, 2 = Ingreso de Código, 3 = Aprobación Pendiente
   
   // Estados para mostrar u ocultar las contraseñas
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  // Estados del reenvío de código (cooldown de 60 s para evitar spam)
+  const [isResending, setIsResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [resendMsg, setResendMsg] = useState("");
+
+  // Temporizador descendente del cooldown de reenvío
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     setError(""); 
+  };
+
+  // Solo permite dígitos (máx. 6) en el campo del código de verificación
+  const handleCodigoChange = (e) => {
+    const soloDigitos = e.target.value.replace(/\D/g, "").slice(0, 6);
+    setFormData({ ...formData, codigoVerificacion: soloDigitos });
+    setError("");
   };
 
   const handleRegistro = async (e) => {
@@ -60,7 +79,7 @@ export default function Registro() {
       const res = await api.post("/auth/registro", payload);
 
       if (res.data?.success) {
-        setSuccess(true);
+        setStep(2); // Registro creado: pasar al ingreso del código de verificación
       }
     } catch (err) {
       setError(err.response?.data?.message || "Error al enviar la solicitud de registro.");
@@ -69,14 +88,143 @@ export default function Registro() {
     }
   };
 
-  if (success) {
+  const handleVerificarCodigo = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    if (!/^\d{6}$/.test(formData.codigoVerificacion)) {
+      setError("El código debe tener exactamente 6 dígitos.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.post("/auth/verificar-email", {
+        codigo: formData.codigoVerificacion,
+      });
+
+      if (res.data?.success) {
+        setStep(3); // Correo verificado: pasa a la vista de aprobación pendiente
+      } else {
+        setError(res.data?.message || "No fue posible verificar el código.");
+      }
+    } catch (err) {
+      setError(
+        err.response?.data?.message ||
+          "Código inválido o expirado. Verifique el correo e intente nuevamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReenviarCodigo = async () => {
+    if (isResending || cooldown > 0) return;
+
+    setIsResending(true);
+    setResendMsg("");
+    setError("");
+    try {
+      const res = await api.post("/auth/reenviar-codigo", {
+        correo: formData.correo,
+      });
+
+      if (res.data?.success) {
+        setResendMsg("Código reenviado al correo.");
+        setCooldown(60);
+      } else {
+        setError(res.data?.message || "No fue posible reenviar el código.");
+      }
+    } catch (err) {
+      setError(
+        err.response?.data?.message || "Error al reenviar el código. Intente más tarde."
+      );
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  // Paso 2: Ingreso del código de verificación de 6 dígitos
+  if (step === 2) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <div style={styles.header}>
+            <div style={styles.mailIconWrapper}>
+              <Mail size={40} color="#1B4B82" />
+            </div>
+            <h1 style={styles.title}>Verifique su Correo</h1>
+            <p style={styles.subtitle}>
+              Enviamos un código de 6 dígitos a{" "}
+              <strong style={{ color: "#101828" }}>{formData.correo}</strong>.
+              Ingréselo para confirmar su cuenta.
+            </p>
+          </div>
+
+          {error && <div style={styles.alertError}>{error}</div>}
+
+          <form onSubmit={handleVerificarCodigo} style={styles.form}>
+            <div style={styles.formGroup}>
+              <input
+                type="text"
+                name="codigoVerificacion"
+                placeholder="000000"
+                maxLength={6}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={formData.codigoVerificacion}
+                onChange={handleCodigoChange}
+                autoFocus
+                style={styles.codeInput}
+              />
+            </div>
+
+            {/* Reenvío de código con cooldown anti-spam */}
+            <div style={styles.resendContainer}>
+              <button
+                type="button"
+                onClick={handleReenviarCodigo}
+                disabled={isResending || cooldown > 0}
+                style={styles.resendLink}
+              >
+                {cooldown > 0
+                  ? `Reenviar código en ${cooldown}s`
+                  : isResending
+                    ? "Reenviando..."
+                    : "¿No recibió el código? Reenviar código"}
+              </button>
+              {resendMsg && <div style={styles.alertSuccess}>{resendMsg}</div>}
+            </div>
+
+            <button
+              type="submit"
+              style={styles.btnSubmit}
+              disabled={loading || formData.codigoVerificacion.trim().length !== 6}
+            >
+              {loading ? "Verificando..." : "Verificar Código"}
+            </button>
+
+            <div style={styles.footerLink}>
+              <Link to="/login" style={styles.link}>
+                ← Volver al inicio de sesión
+              </Link>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Paso 3: Éxito final — el administrador debe aprobar la cuenta
+  if (step === 3) {
     return (
       <div style={styles.container}>
         <div style={styles.cardSuccess}>
           <CheckCircle2 size={48} color="#166534" style={{ marginBottom: "16px" }} />
           <h2 style={styles.titleSuccess}>¡Solicitud Enviada!</h2>
           <p style={styles.descSuccess}>
-            Su registro ha sido recibido exitosamente. Un administrador validará sus datos y autorizará su acceso a la plataforma.
+            Su correo ha sido verificado correctamente. Un administrador validará sus
+            datos y autorizará su acceso a la plataforma.
           </p>
           <Link to="/login" style={styles.btnPrimaryLink}>
             Volver al Inicio de Sesión
@@ -85,6 +233,8 @@ export default function Registro() {
       </div>
     );
   }
+
+  // Paso 1: Formulario de registro
 
   return (
     <div style={styles.container}>
@@ -268,6 +418,8 @@ const styles = {
   header: { textAlign: "center", marginBottom: "24px" },
   title: { fontSize: "24px", fontWeight: "700", color: "#101828", margin: "0 0 8px 0" },
   subtitle: { fontSize: "14px", color: "#667085", margin: 0 },
+  mailIconWrapper: { width: "72px", height: "72px", borderRadius: "50%", backgroundColor: "#EEF4FB", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px auto" },
+  codeInput: { width: "100%", textAlign: "center", letterSpacing: "12px", fontSize: "28px", fontWeight: "700", padding: "16px", borderRadius: "10px", border: "1px solid #E5E7EB", outline: "none", boxSizing: "border-box", color: "#101828", marginBottom: "8px" },
   titleSuccess: { fontSize: "24px", fontWeight: "700", color: "#166534", margin: "0 0 12px 0" },
   descSuccess: { fontSize: "14px", color: "#4B5563", marginBottom: "24px", lineHeight: "1.5" },
   form: { display: "flex", flexDirection: "column" },
@@ -285,5 +437,8 @@ const styles = {
   btnPrimaryLink: { backgroundColor: "#1B4B82", color: "#FFFFFF", padding: "10px 20px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", textDecoration: "none" },
   footerLink: { textAlign: "center", marginTop: "24px" },
   link: { color: "#667085", fontSize: "14px", textDecoration: "none" },
-  alertError: { backgroundColor: "#FEE2E2", color: "#991B1B", padding: "12px", borderRadius: "8px", marginBottom: "20px", fontSize: "13px", textAlign: "center" }
+  alertError: { backgroundColor: "#FEE2E2", color: "#991B1B", padding: "12px", borderRadius: "8px", marginBottom: "20px", fontSize: "13px", textAlign: "center" },
+  alertSuccess: { backgroundColor: "#DCFCE7", color: "#166534", padding: "10px 14px", borderRadius: "8px", marginTop: "10px", fontSize: "13px", textAlign: "center" },
+  resendContainer: { textAlign: "center", marginTop: "14px" },
+  resendLink: { background: "none", border: "none", color: "#1B4B82", fontSize: "13px", fontWeight: "600", textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", padding: 0 }
 };

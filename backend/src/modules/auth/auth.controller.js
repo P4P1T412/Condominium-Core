@@ -89,8 +89,127 @@ async function registro(req, res, next) {
     return res.status(201).json({
       success: true,
       message:
-        "Solicitud enviada. Un administrador debe aprobar tu cuenta.",
+        "Solicitud enviada. Revise su correo, ingrese el código de verificación de 6 dígitos y espere la aprobación de un administrador.",
       data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Endpoint: POST /api/auth/verificar-email
+ * Verifica el correo electrónico de una cuenta mediante el código de 6 dígitos.
+ */
+async function verifyEmail(req, res, next) {
+  try {
+    const { codigo } = req.body;
+
+    if (!codigo || !/^\d{6}$/.test(String(codigo).trim())) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "Debe ingresar un código de verificación numérico de 6 dígitos.",
+      });
+    }
+
+    const result = await authService.verifyEmailCode(codigo);
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Endpoint: POST /api/auth/reenviar-codigo
+ * Reenvía el código de verificación al correo del solicitante (cuenta aún
+ * no verificada). Permite salir del estado "huérfano" si el código expiró.
+ */
+async function resendCode(req, res, next) {
+  try {
+    const { correo } = req.body;
+
+    if (!correo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(correo).trim())) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "Debe proporcionar un correo electrónico válido.",
+      });
+    }
+
+    const result = await authService.resendVerificationCode(correo);
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Endpoint: POST /api/auth/olvide-contrasena
+ * Inicia el flujo de recuperación de contraseña enviando un enlace al correo
+ * registrado. Responde siempre con un mensaje genérico para no revelar si el
+ * correo existe (mitiga la enumeración de usuarios).
+ */
+async function forgotPassword(req, res, next) {
+  try {
+    const { correo } = req.body;
+
+    if (!correo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(correo).trim())) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "Debe proporcionar un correo electrónico válido.",
+      });
+    }
+
+    const result = await authService.forgotPassword(correo);
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Endpoint: POST /api/auth/restablecer-contrasena
+ * Restablece la contraseña de una cuenta mediante un token vigente.
+ */
+async function resetPassword(req, res, next) {
+  try {
+    const { token, nuevaContrasena } = req.body;
+
+    if (!token || String(token).trim() === "") {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "El token de recuperación es obligatorio.",
+      });
+    }
+
+    if (!nuevaContrasena || String(nuevaContrasena).length < 6) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "La nueva contraseña debe tener al menos 6 caracteres.",
+      });
+    }
+
+    const result = await authService.resetPassword(token, nuevaContrasena);
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
     });
   } catch (error) {
     next(error);
@@ -135,6 +254,10 @@ async function getMe(req, res, next) {
 module.exports = {
   login,
   registro,
+  verifyEmail,
+  resendCode,
+  forgotPassword,
+  resetPassword,
   logout,
   getMe,
 };

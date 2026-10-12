@@ -109,6 +109,11 @@ export default function Login() {
                 {showPassword ? <EyeOff size={18} color="#6B7280" /> : <Eye size={18} color="#6B7280" />}
               </button>
             </div>
+            <div style={styles.forgotContainer}>
+              <Link to="/olvide-contrasena" style={styles.forgotLink}>
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </div>
           </div>
 
           <button
@@ -237,6 +242,16 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+  },
+  forgotContainer: {
+    textAlign: "right",
+    marginTop: "4px",
+  },
+  forgotLink: {
+    fontSize: "13px",
+    color: "var(--color-primary, #1B4B82)",
+    fontWeight: "600",
+    textDecoration: "none",
   },
 
   button: {

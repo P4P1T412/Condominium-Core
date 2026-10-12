@@ -9,9 +9,10 @@ const { executeQuery } = require("../../config/db");
 
 /**
  * Obtiene todos los usuarios del sistema con datos de su persona y rol.
- * Excluye las cuentas auto-registradas que aún no fueron aprobadas
- * (es_verificado = 'NO'); éstas se gestionan únicamente desde el módulo
- * de Solicitudes Pendientes para evitar duplicidad visual.
+ * Muestra únicamente las cuentas activas (estado = 'ACTIVO'), es decir las
+ * ya aprobadas por un administrador. Las cuentas auto-registradas que aún
+ * esperan verificación de correo o aprobación se gestionan en el módulo de
+ * Solicitudes Pendientes para evitar duplicidad visual.
  */
 async function getAllUsuarios() {
   const query = `
@@ -33,7 +34,7 @@ async function getAllUsuarios() {
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
-    WHERE u.es_verificado = 'SI'
+    WHERE u.estado = 'ACTIVO'
     ORDER BY u.id_usuario ASC
   `;
 
@@ -177,8 +178,10 @@ async function updateRolUsuario(idUsuario, idRol) {
 }
 
 /**
- * Lista las cuentas auto-registradas que aún esperan aprobación
- * (es_verificado = 'NO'), junto con los datos de su PERSONA asociada.
+ * Lista las cuentas que esperan aprobación del administrador: deben estar
+ * INACTIVAS (todavía sin autorización) y con el correo ya verificado
+ * (es_verificado = 'SI'). Las cuentas con es_verificado = 'NO' son registros
+ * "huérfanos" que aún no confirman su correo y no se muestran aquí.
  */
 async function getUsuariosPendientes() {
   const query = `
@@ -197,7 +200,8 @@ async function getUsuariosPendientes() {
       p.dpi
     FROM USUARIO u
     JOIN PERSONA p ON u.id_persona = p.id_persona
-    WHERE u.es_verificado = 'NO'
+    WHERE u.estado = 'INACTIVO'
+      AND u.es_verificado = 'SI'
     ORDER BY u.fecha_creacion ASC
   `;
 
@@ -224,6 +228,7 @@ async function getUsuariosPendientes() {
 /**
  * Aprueba una solicitud de auto-registro: marca la cuenta como verificada,
  * la activa y le asigna el rol definitivo elegido por el administrador.
+ * Solo aplica sobre cuentas que siguen INACTIVAS.
  */
 async function aprobarUsuario(idUsuario, idRol) {
   const query = `
@@ -232,7 +237,7 @@ async function aprobarUsuario(idUsuario, idRol) {
         estado = 'ACTIVO',
         id_rol = :idRol
     WHERE id_usuario = :idUsuario
-      AND es_verificado = 'NO'
+      AND estado = 'INACTIVO'
   `;
 
   const result = await executeQuery(
@@ -258,11 +263,11 @@ async function aprobarUsuario(idUsuario, idRol) {
 async function rechazarUsuario(idUsuario) {
   const id = Number(idUsuario);
 
-  // 1. Se recupera la persona solo si la cuenta sigue pendiente
+  // 1. Se recupera la persona solo si la cuenta sigue pendiente de aprobación
   const checkSql = `
     SELECT id_persona
     FROM USUARIO
-    WHERE id_usuario = :id AND es_verificado = 'NO'
+    WHERE id_usuario = :id AND estado = 'INACTIVO'
   `;
   const check = await executeQuery(checkSql, { id });
 
