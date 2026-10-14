@@ -19,5 +19,10 @@ router.get("/:id", requireRole("ADMINISTRADOR", "GARITA", "CONDOMINO"), casasCon
 router.post("/", requireRole("ADMINISTRADOR"), casasController.createCasa);
 router.put("/:id", requireRole("ADMINISTRADOR"), casasController.updateCasa);
 router.post("/:id/residentes", requireRole("ADMINISTRADOR"), casasController.addResidente);
+router.delete(
+  "/:id/residentes/:idResidente",
+  requireRole("ADMINISTRADOR"),
+  casasController.removeResidente
+);
 
 module.exports = router;
