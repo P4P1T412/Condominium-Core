@@ -2,15 +2,6 @@
  * =============================================================================
  * SERVICIO DE CORREO ELECTRÓNICO (Nodemailer con Gmail)
  * =============================================================================
- * Descripción:
- *   Configura el transporter SMTP para usar Gmail.
- *   Se requiere una "Contraseña de Aplicación" de Google.
- *
- * Variables de entorno requeridas:
- *   EMAIL_USER (Tu correo de Gmail)
- *   EMAIL_PASS (Contraseña de aplicación de 16 caracteres)
- *   EMAIL_FROM (Opcional: Nombre visible)
- * =============================================================================
  */
 
 const nodemailer = require("nodemailer");
