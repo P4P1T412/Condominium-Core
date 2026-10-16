@@ -19,6 +19,12 @@ export default function DirectorioCuentas() {
     contrasena: "",
   });
 
+  // Modal para editar rol de una cuenta existente
+  const [showRolModal, setShowRolModal] = useState(false);
+  const [usuarioAEditar, setUsuarioAEditar] = useState(null);
+  const [nuevoRolId, setNuevoRolId] = useState("");
+  const [savingRol, setSavingRol] = useState(false);
+
   useEffect(() => {
     cargarDatos();
   }, []);
@@ -85,6 +91,36 @@ export default function DirectorioCuentas() {
       }
     } catch (err) {
       alert(err.response?.data?.message || "No se pudo cambiar el estado.");
+    }
+  }
+
+  function abrirModalRol(usuario) {
+    setUsuarioAEditar(usuario);
+    setNuevoRolId(String(usuario.rol?.idRol ?? ""));
+    setShowRolModal(true);
+  }
+
+  async function handleGuardarRol(e) {
+    e.preventDefault();
+    if (!usuarioAEditar || !nuevoRolId) return;
+
+    setSavingRol(true);
+    try {
+      const res = await api.put(
+        `/usuarios/${usuarioAEditar.idUsuario}/rol`,
+        { idRol: Number(nuevoRolId) }
+      );
+
+      if (res.data?.success) {
+        setShowRolModal(false);
+        setUsuarioAEditar(null);
+        setNuevoRolId("");
+        cargarDatos();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || "Error al actualizar el rol.");
+    } finally {
+      setSavingRol(false);
     }
   }
 
@@ -159,16 +195,24 @@ export default function DirectorioCuentas() {
                     <StatusBadge status={u.estado} />
                   </td>
                   <td style={styles.td}>
-                    <button
-                      onClick={() => handleToggleEstado(u)}
-                      style={
-                        u.estado === "ACTIVO"
-                          ? styles.btnSuspender
-                          : styles.btnActivar
-                      }
-                    >
-                      {u.estado === "ACTIVO" ? "Suspender" : "Activar"}
-                    </button>
+                    <div style={styles.actionGroup}>
+                      <button
+                        onClick={() => handleToggleEstado(u)}
+                        style={
+                          u.estado === "ACTIVO"
+                            ? styles.btnSuspender
+                            : styles.btnActivar
+                        }
+                      >
+                        {u.estado === "ACTIVO" ? "Suspender" : "Activar"}
+                      </button>
+                      <button
+                        onClick={() => abrirModalRol(u)}
+                        style={styles.btnEditarRol}
+                      >
+                        ✎ Editar Rol
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -267,6 +311,64 @@ export default function DirectorioCuentas() {
                   disabled={saving || personasSinUsuario.length === 0}
                 >
                   {saving ? "Creando..." : "Crear Usuario"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar Rol */}
+      {showRolModal && usuarioAEditar && (
+        <div style={styles.modalOverlay} onClick={() => setShowRolModal(false)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>Editar Rol de Acceso</h3>
+                <p style={styles.modalSubtitle}>
+                  {usuarioAEditar.persona?.nombreCompleto} — @{usuarioAEditar.nombreUsuario}
+                </p>
+              </div>
+              <button onClick={() => setShowRolModal(false)} style={styles.modalClose}>✕</button>
+            </div>
+
+            <form onSubmit={handleGuardarRol} style={styles.form}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Rol actual</label>
+                <span style={styles.badgeRol}>{usuarioAEditar.rol?.nombre}</span>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Nuevo Rol a Asignar *</label>
+                <select
+                  required
+                  value={nuevoRolId}
+                  onChange={(e) => setNuevoRolId(e.target.value)}
+                  style={styles.select}
+                >
+                  {roles.map((r) => (
+                    <option key={r.idRol} value={r.idRol}>
+                      {r.nombre} — {r.descripcion}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={styles.modalFooter}>
+                <button
+                  type="button"
+                  onClick={() => setShowRolModal(false)}
+                  style={styles.btnSecondary}
+                  disabled={savingRol}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={styles.btnPrimary}
+                  disabled={savingRol}
+                >
+                  {savingRol ? "Guardando..." : "Guardar Rol"}
                 </button>
               </div>
             </form>
@@ -374,6 +476,21 @@ const styles = {
     fontSize: "12px",
     fontWeight: "600",
     cursor: "pointer",
+  },
+  btnEditarRol: {
+    backgroundColor: "#EEF4FB",
+    color: "var(--color-primary, #1B4B82)",
+    border: "none",
+    padding: "5px 12px",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  actionGroup: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
   },
   alertError: {
     backgroundColor: "#FEE2E2",

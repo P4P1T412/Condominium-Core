@@ -89,10 +89,64 @@ async function updateRol(req, res, next) {
   }
 }
 
+/**
+ * GET /api/usuarios/pendientes
+ * Lista de solicitudes de auto-registro esperando aprobación.
+ */
+async function getPendientes(req, res, next) {
+  try {
+    const data = await usuariosService.getUsuariosPendientes();
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/usuarios/:id/aprobar
+ * Aprueba una solicitud y asigna el rol definitivo recibido en el body.
+ */
+async function aprobar(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { idRol } = req.body;
+
+    if (!idRol) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "Debe seleccionar el rol que se asignará al aprobar la solicitud.",
+      });
+    }
+
+    const result = await usuariosService.aprobarUsuario(id, idRol);
+    return res.status(200).json({ success: true, message: result.message });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/usuarios/:id/rechazar
+ * Rechaza y elimina una solicitud de auto-registro.
+ */
+async function rechazar(req, res, next) {
+  try {
+    const { id } = req.params;
+    const result = await usuariosService.rechazarUsuario(id);
+    return res.status(200).json({ success: true, message: result.message });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getUsuarios,
   getRoles,
   createUsuario,
   updateEstado,
   updateRol,
+  getPendientes,
+  aprobar,
+  rechazar,
 };

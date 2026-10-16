@@ -198,13 +198,66 @@ async function createCasa(casaData, userId) {
 
 /**
  * Asocia un residente físico (familiar o inquilino) a una vivienda.
- * 
+ *
+ * Como la tabla RESIDENTE conserva el histórico (desvinculaciones mediante
+ * estado = 'INACTIVO'), si la persona ya tuvo un vínculo previo con la misma
+ * casa se reactiva ese registro en lugar de insertar uno nuevo (la restricción
+ * uq_persona_casa es única por par persona/casa).
+ *
  * @param {number} idCasa - ID de la vivienda.
  * @param {object} residenteData - Datos del habitante y su clasificación.
  */
 async function addResidenteToCasa(idCasa, residenteData) {
   const { idPersona, tipoResidente, esPrincipal } = residenteData;
 
+  const tipoFinal = tipoResidente || "FAMILIAR";
+  const principalFinal = esPrincipal ? "SI" : "NO";
+
+  // 1. ¿Existe ya un vínculo previo de esta persona con la casa?
+  const checkSql = `
+    SELECT id_residente, estado
+    FROM RESIDENTE
+    WHERE id_persona = :idPersona AND id_casa = :idCasa
+  `;
+  const checkResult = await executeQuery(checkSql, { idPersona, idCasa });
+
+  if (checkResult.rows.length > 0) {
+    const existente = checkResult.rows[0];
+
+    if (existente.ESTADO === "ACTIVO") {
+      const error = new Error("La persona ya se encuentra vinculada a esta vivienda.");
+      error.statusCode = 409;
+      error.code = "RESIDENT_ALREADY_LINKED";
+      throw error;
+    }
+
+    // Reactivación de un vínculo previamente desvinculado
+    const reactivarSql = `
+      UPDATE RESIDENTE
+      SET tipo_residente = :tipoResidente,
+          es_principal = :esPrincipal,
+          estado = 'ACTIVO',
+          fecha_ingreso = SYSDATE,
+          fecha_salida = NULL
+      WHERE id_residente = :idResidente
+    `;
+    await executeQuery(
+      reactivarSql,
+      {
+        tipoResidente: tipoFinal,
+        esPrincipal: principalFinal,
+        idResidente: existente.ID_RESIDENTE,
+      },
+      { autoCommit: true }
+    );
+
+    return {
+      id: existente.ID_RESIDENTE,
+      message: "Residente reconectado a la vivienda.",
+    };
+  }
+
+  // 2. Inserción de un vínculo nuevo
   const insertSql = `
     INSERT INTO RESIDENTE (
       id_persona,
@@ -224,13 +277,49 @@ async function addResidenteToCasa(idCasa, residenteData) {
   const binds = {
     idPersona,
     idCasa,
-    tipoResidente: tipoResidente || "FAMILIAR",
-    esPrincipal: esPrincipal ? "SI" : "NO",
+    tipoResidente: tipoFinal,
+    esPrincipal: principalFinal,
     id_residente_out: { dir: require("oracledb").BIND_OUT, type: require("oracledb").NUMBER },
   };
 
   const result = await executeQuery(insertSql, binds, { autoCommit: true });
   return { id: result.outBinds.id_residente_out[0], message: "Residente asociado a la vivienda." };
+}
+
+/**
+ * Desvincula (baja lógica) a un residente de una vivienda.
+ *
+ * No se elimina el registro para conservar el histórico del censo: se marca
+ * estado = 'INACTIVO' y se registra la fecha de salida.
+ *
+ * @param {number} idCasa - ID de la vivienda.
+ * @param {number} idResidente - ID del vínculo RESIDENTE a desactivar.
+ * @returns {Promise<{message: string}>}
+ */
+async function removeResidenteFromCasa(idCasa, idResidente) {
+  const updateSql = `
+    UPDATE RESIDENTE
+    SET estado = 'INACTIVO',
+        fecha_salida = SYSDATE
+    WHERE id_residente = :idResidente
+      AND id_casa = :idCasa
+      AND estado = 'ACTIVO'
+  `;
+
+  const result = await executeQuery(
+    updateSql,
+    { idResidente, idCasa },
+    { autoCommit: true }
+  );
+
+  if (!result.rowsAffected || result.rowsAffected === 0) {
+    const error = new Error("El residente no existe en esta vivienda o ya fue desvinculado.");
+    error.statusCode = 404;
+    error.code = "RESIDENT_NOT_FOUND";
+    throw error;
+  }
+
+  return { message: "Residente desvinculado de la vivienda correctamente." };
 }
 
 /**
@@ -368,6 +457,7 @@ module.exports = {
   getCasaById,
   createCasa,
   addResidenteToCasa,
+  removeResidenteFromCasa,
   getPersonas,
   updateCasa,
   createPersona,

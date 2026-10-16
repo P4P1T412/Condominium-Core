@@ -84,6 +84,28 @@ async function getPersonas(req, res, next) {
   }
 }
 
+/**
+ * Desvincula (baja lógica) a un residente de una vivienda.
+ * Conserva el histórico del censo marcando el vínculo como INACTIVO.
+ */
+async function removeResidente(req, res, next) {
+  try {
+    const { id, idResidente } = req.params;
+
+    const result = await casasService.removeResidenteFromCasa(
+      Number(id),
+      Number(idResidente)
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 // Actualiza la vivienda delegando en la capa de servicio
 async function updateCasa(req, res, next) {
   try {
@@ -143,6 +165,7 @@ module.exports = {
   getCasa,
   createCasa,
   addResidente,
+  removeResidente,
   getPersonas,
   updateCasa,
   createPersona,
