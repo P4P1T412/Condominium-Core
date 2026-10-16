@@ -5,6 +5,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
+const path = require("path");
 
 // Pool resiliente de Oracle y Middleware de Errores
 const { initializeDbPool, closeDbPool, executeQuery } = require("./config/db");
@@ -33,6 +34,7 @@ app.use(
 
 app.use(express.json());
 app.use(cookieParser()); // Parser de cookies para JWT
+app.use("/uploads", express.static(path.resolve(__dirname, "../uploads")));
 app.use(morgan("dev"));
 
 // Límite general de peticiones (mitiga fuerza bruta en login, etc.)

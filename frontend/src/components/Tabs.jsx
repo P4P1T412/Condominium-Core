@@ -10,12 +10,13 @@ import "./Tabs.css";
  * @param {Array<{id: string, label: string, content: React.ReactNode}>} tabs - Lista de pestañas a renderizar.
  * @param {string} [defaultTab] - ID de la pestaña que se mostrará inicialmente.
  */
-export default function Tabs({ tabs, defaultTab }) {
+export default function Tabs({ tabs, defaultTab, activeTab: controlledTab, onTabChange }) {
   // Inicializa con la pestaña indicada o toma la primera por defecto
   const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id);
+  const selectedTab = controlledTab || activeTab;
 
   // Ubica el nodo correspondiente a la pestaña seleccionada
-  const current = tabs.find((t) => t.id === activeTab) || tabs[0];
+  const current = tabs.find((t) => t.id === selectedTab) || tabs[0];
 
   if (!tabs || tabs.length === 0) return null;
 
@@ -24,14 +25,17 @@ export default function Tabs({ tabs, defaultTab }) {
       {/* Barra superior de pestañas */}
       <div className="tabs-bar" role="tablist">
         {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
+          const isActive = selectedTab === tab.id;
           return (
             <button
               key={tab.id}
               role="tab"
               aria-selected={isActive}
               className={`tabs-bar__item ${isActive ? "tabs-bar__item--active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                onTabChange?.(tab.id);
+              }}
             >
               {tab.label}
             </button>

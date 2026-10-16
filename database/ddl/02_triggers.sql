@@ -1,31 +1,59 @@
 -- =====================================================================
--- 1. Validar que un pago con estado 'VALIDO' no exceda el saldo
+-- 1. Validar que un pago con estado 'VALIDO' no exceda el saldo.
+-- Se usa compound trigger porque consultar PAGO desde un trigger fila a fila
+-- provoca ORA-04091 (tabla mutante) al aprobar un comprobante.
 -- =====================================================================
 CREATE OR REPLACE TRIGGER trg_pago_validar_monto
-BEFORE INSERT OR UPDATE OF monto_pagado, estado ON PAGO
-FOR EACH ROW
-DECLARE
-    v_monto_total  CUOTA.monto_total%TYPE;
+FOR INSERT OR UPDATE OF monto_pagado, estado ON PAGO
+COMPOUND TRIGGER
+    TYPE t_pago IS RECORD (
+        id_pago PAGO.id_pago%TYPE,
+        id_cuota PAGO.id_cuota%TYPE,
+        monto_pagado PAGO.monto_pagado%TYPE,
+        estado PAGO.estado%TYPE
+    );
+    TYPE t_pagos IS TABLE OF t_pago INDEX BY PLS_INTEGER;
+    v_pagos t_pagos;
+    v_contador PLS_INTEGER := 0;
+    v_monto_total CUOTA.monto_total%TYPE;
     v_total_pagado NUMBER(10,2);
-    v_saldo        NUMBER(10,2);
-BEGIN
-    IF :NEW.estado = 'VALIDO' THEN
-        SELECT monto_total INTO v_monto_total FROM CUOTA WHERE id_cuota = :NEW.id_cuota;
 
-        SELECT NVL(SUM(monto_pagado), 0)
-        INTO v_total_pagado
-        FROM PAGO
-        WHERE id_cuota = :NEW.id_cuota
-          AND estado = 'VALIDO'
-          AND id_pago <> NVL(:NEW.id_pago, -1);
-
-        v_saldo := v_monto_total - v_total_pagado;
-
-        IF :NEW.monto_pagado > v_saldo THEN
-            RAISE_APPLICATION_ERROR(-20001, 'El pago de Q' || :NEW.monto_pagado || ' excede el saldo restante (Q' || v_saldo || ').');
+    AFTER EACH ROW IS
+    BEGIN
+        IF :NEW.estado = 'VALIDO' THEN
+            v_contador := v_contador + 1;
+            v_pagos(v_contador).id_pago := :NEW.id_pago;
+            v_pagos(v_contador).id_cuota := :NEW.id_cuota;
+            v_pagos(v_contador).monto_pagado := :NEW.monto_pagado;
+            v_pagos(v_contador).estado := :NEW.estado;
         END IF;
-    END IF;
-END;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        FOR i IN 1 .. v_contador LOOP
+            SELECT monto_total INTO v_monto_total
+            FROM CUOTA
+            WHERE id_cuota = v_pagos(i).id_cuota;
+
+            SELECT NVL(SUM(monto_pagado), 0)
+            INTO v_total_pagado
+            FROM PAGO
+            WHERE id_cuota = v_pagos(i).id_cuota
+              AND estado = 'VALIDO'
+              AND id_pago <> NVL(v_pagos(i).id_pago, -1);
+
+            IF v_pagos(i).monto_pagado > v_monto_total - v_total_pagado THEN
+                RAISE_APPLICATION_ERROR(
+                    -20001,
+                    'El pago de Q' || v_pagos(i).monto_pagado ||
+                    ' excede el saldo restante (Q' ||
+                    (v_monto_total - v_total_pagado) || ').'
+                );
+            END IF;
+        END LOOP;
+    END AFTER STATEMENT;
+END trg_pago_validar_monto;
 
 
 -- =====================================================================
