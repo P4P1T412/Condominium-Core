@@ -4,6 +4,16 @@ import api from "../../api/axios";
 import "./FinanceStyles.css";
 
 const money = (value) => `Q ${Number(value || 0).toFixed(2)}`;
+const MONTHS = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+function formatPeriod(periodo) {
+  const match = String(periodo || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return periodo;
+  return `${MONTHS[Number(match[2]) - 1] || match[2]} ${match[1]}`;
+}
 
 function StatementTab({ rows, loading, error, onRefresh, onApplyPayment, onViewRequest }) {
   function downloadReceipt(idPago) {
@@ -50,12 +60,23 @@ function PaymentForm({ rows, selectedRow, onSubmitted }) {
   const [form, setForm] = useState({ idCuota: selectedRow?.idCuota || "", monto: selectedRow?.saldo || "", fechaPago: new Date().toISOString().slice(0, 10), metodo: "TRANSFERENCIA", referencia: "" });
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
-  const applicable = rows.filter((row) => row.aplicable);
+  const applicable = rows
+    .filter((row) => row.aplicable && row.saldo > 0)
+    .sort((first, second) => String(first.periodo).localeCompare(String(second.periodo)));
   useEffect(() => {
     if (selectedRow) {
       setForm((current) => ({ ...current, idCuota: selectedRow.idCuota, monto: selectedRow.saldo }));
     }
   }, [selectedRow]);
+
+  function selectPeriod(event) {
+    const row = applicable.find((item) => String(item.idCuota) === event.target.value);
+    setForm((current) => ({
+      ...current,
+      idCuota: event.target.value,
+      monto: row?.saldo || "",
+    }));
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -83,9 +104,9 @@ function PaymentForm({ rows, selectedRow, onSubmitted }) {
       <p className="finance-muted">Adjunta tu comprobante para que administración lo valide.</p>
       {message && <p className="finance-muted">{message}</p>}
       <label>Cuota
-        <select value={form.idCuota} onChange={(e) => setForm({ ...form, idCuota: e.target.value })} required>
+        <select value={form.idCuota} onChange={selectPeriod} required>
           <option value="">Seleccione el periodo</option>
-          {applicable.map((row) => <option key={row.idCuota} value={row.idCuota}>{row.casa} · {row.periodo} · saldo {money(row.saldo)}</option>)}
+          {applicable.map((row) => <option key={row.idCuota} value={row.idCuota}>{row.casa} · {formatPeriod(row.periodo)} · saldo {money(row.saldo)}</option>)}
         </select>
       </label>
       <div className="finance-form-grid">

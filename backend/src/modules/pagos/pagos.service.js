@@ -126,7 +126,76 @@ function mapAccount(row) {
   };
 }
 
+async function ensureMonthlyFees(personaId) {
+  const periodResult = await executeQuery(`
+    SELECT TO_NUMBER(TO_CHAR(SYSDATE, 'YYYY')) AS anio,
+           TO_NUMBER(TO_CHAR(SYSDATE, 'MM')) AS mes
+    FROM dual
+  `);
+  const currentYear = Number(periodResult.rows[0].ANIO);
+  const currentMonth = Number(periodResult.rows[0].MES);
+
+  const housesResult = await executeQuery(`
+    SELECT id_casa
+    FROM CASA
+    WHERE estado <> 'INACTIVA'
+      AND id_casa IN (
+        SELECT id_casa FROM CASA WHERE id_propietario = :personaId
+        UNION
+        SELECT id_casa FROM RESIDENTE
+        WHERE id_persona = :personaId AND estado = 'ACTIVO'
+      )
+  `, { personaId: Number(personaId) });
+
+  for (const house of housesResult.rows) {
+    const templateResult = await executeQuery(`
+      SELECT concepto, monto_total, creado_por
+      FROM (
+        SELECT concepto, monto_total, creado_por
+        FROM CUOTA
+        WHERE id_casa = :idCasa
+          AND id_multa IS NULL
+        ORDER BY periodo DESC
+      )
+      WHERE ROWNUM = 1
+    `, { idCasa: house.ID_CASA });
+
+    if (!templateResult.rows.length) continue;
+    const template = templateResult.rows[0];
+
+    for (let month = 1; month <= currentMonth; month += 1) {
+      const periodo = `${currentYear}-${String(month).padStart(2, "0")}`;
+      await executeQuery(`
+        INSERT INTO CUOTA (
+          id_casa, concepto, periodo, monto_total,
+          fecha_emision, fecha_vencimiento, estado, creado_por
+        )
+        SELECT :idCasa, :concepto, :periodo, :montoTotal,
+               TO_DATE(:periodo || '-01', 'YYYY-MM-DD'),
+               LAST_DAY(TO_DATE(:periodo || '-01', 'YYYY-MM-DD')),
+               'PENDIENTE', :creadoPor
+        FROM dual
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM CUOTA
+          WHERE id_casa = :idCasa
+            AND id_multa IS NULL
+            AND concepto = :concepto
+            AND periodo = :periodo
+        )
+      `, {
+        idCasa: house.ID_CASA,
+        concepto: template.CONCEPTO,
+        periodo,
+        montoTotal: template.MONTO_TOTAL,
+        creadoPor: template.CREADO_POR,
+      }, { autoCommit: true });
+    }
+  }
+}
+
 async function getAccountStatement(personaId) {
+  await ensureMonthlyFees(personaId);
   const result = await executeQuery(`${ACCOUNT_QUERY} ORDER BY fecha_vencimiento DESC`, {
     personaId: Number(personaId),
   });
