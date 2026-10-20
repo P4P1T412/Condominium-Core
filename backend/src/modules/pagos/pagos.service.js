@@ -348,7 +348,8 @@ async function getPaymentReceipt(idPago, userId) {
   const result = await executeQuery(`
     SELECT p.id_pago, p.monto_pagado, p.fecha_pago, p.metodo_pago,
            p.referencia, p.estado, p.fecha_validacion,
-           cu.periodo, cu.concepto, c.numero_casa, c.bloque,
+           cu.periodo, cu.concepto, cu.fecha_vencimiento,
+           c.numero_casa, c.bloque,
            per.nombres || ' ' || per.apellidos AS propietario
     FROM PAGO p
     JOIN CUOTA cu ON cu.id_cuota = p.id_cuota
