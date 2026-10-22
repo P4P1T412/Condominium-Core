@@ -204,9 +204,7 @@ async function getAccountStatement(personaId) {
 
 async function getGeneralStatement({ periodo, desde, hasta, idCasa } = {}) {
   const dateConditions = [];
-  const binds = {
-    periodo: periodo || null,
-  };
+  const binds = {};
 
   if (desde) {
     dateConditions.push("cu.fecha_vencimiento >= TO_DATE(:desde, 'YYYY-MM-DD')");
@@ -220,6 +218,9 @@ async function getGeneralStatement({ periodo, desde, hasta, idCasa } = {}) {
   const feeFilter = dateConditions.length
     ? dateConditions.join(" AND ")
     : "cu.periodo = NVL(:periodo, TO_CHAR(SYSDATE, 'YYYY-MM'))";
+  if (!dateConditions.length) {
+    binds.periodo = periodo || null;
+  }
   const houseFilter = idCasa ? "AND c.id_casa = :idCasa" : "";
   if (idCasa) binds.idCasa = Number(idCasa);
 
