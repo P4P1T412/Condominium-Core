@@ -30,6 +30,7 @@ router.get("/pendientes", requireRole("ADMINISTRADOR"), controller.getPending);
 router.get("/estado-cuenta", requireRole("CONDOMINO"), controller.getStatement);
 router.get("/estado-cuenta-general", requireRole("ADMINISTRADOR"), controller.getGeneral);
 router.get("/morosos", requireRole("ADMINISTRADOR"), controller.getDelinquent);
+router.get("/multas", requireRole("ADMINISTRADOR"), controller.getActiveFines);
 router.post("/multas", requireRole("ADMINISTRADOR"), controller.createFine);
 router.post("/reportar", requireRole("CONDOMINO"), upload.single("comprobante"), controller.submit);
 router.put("/:id/validar", requireRole("ADMINISTRADOR"), controller.validate);

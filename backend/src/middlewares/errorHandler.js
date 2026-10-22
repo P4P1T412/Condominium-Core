@@ -55,6 +55,14 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  if (msg.includes("CK_MULTA_FECHAS")) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_FINE_DUE_DATE",
+      message: "La fecha de vencimiento no puede ser anterior a la fecha de emisión."
+    });
+  }
+
   // 5. Error general o no previsto
   const statusCode = err.status || err.statusCode || 500;
   res.status(statusCode).json({

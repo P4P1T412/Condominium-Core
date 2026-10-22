@@ -202,7 +202,27 @@ async function getAccountStatement(personaId) {
   return result.rows.map(mapAccount);
 }
 
-async function getGeneralStatement(periodo) {
+async function getGeneralStatement({ periodo, desde, hasta, idCasa } = {}) {
+  const dateConditions = [];
+  const binds = {
+    periodo: periodo || null,
+  };
+
+  if (desde) {
+    dateConditions.push("cu.fecha_vencimiento >= TO_DATE(:desde, 'YYYY-MM-DD')");
+    binds.desde = desde;
+  }
+  if (hasta) {
+    dateConditions.push("cu.fecha_vencimiento < TO_DATE(:hasta, 'YYYY-MM-DD') + 1");
+    binds.hasta = hasta;
+  }
+
+  const feeFilter = dateConditions.length
+    ? dateConditions.join(" AND ")
+    : "cu.periodo = NVL(:periodo, TO_CHAR(SYSDATE, 'YYYY-MM'))";
+  const houseFilter = idCasa ? "AND c.id_casa = :idCasa" : "";
+  if (idCasa) binds.idCasa = Number(idCasa);
+
   const result = await executeQuery(`
     SELECT c.id_casa, c.numero_casa, c.bloque,
            per.nombres || ' ' || per.apellidos AS propietario,
@@ -219,10 +239,10 @@ async function getGeneralStatement(periodo) {
     FROM CASA c
     JOIN PERSONA per ON per.id_persona = c.id_propietario
     LEFT JOIN CUOTA cu ON cu.id_casa = c.id_casa
-      AND cu.periodo = NVL(:periodo, TO_CHAR(SYSDATE, 'YYYY-MM'))
-    WHERE c.estado <> 'INACTIVA'
+      AND ${feeFilter}
+    WHERE c.estado <> 'INACTIVA' ${houseFilter}
     ORDER BY c.bloque, c.numero_casa
-  `, { periodo: periodo || null });
+  `, binds);
 
   return result.rows.map((row) => ({
     idCasa: row.ID_CASA,
@@ -258,20 +278,62 @@ async function getDelinquentHouses() {
   }));
 }
 
+async function getActiveFines({ desde, hasta, idCasa } = {}) {
+  const conditions = ["m.estado IN ('PENDIENTE', 'VENCIDA')"];
+  const binds = {};
+
+  if (desde) {
+    conditions.push("m.fecha_multa >= TO_DATE(:desde, 'YYYY-MM-DD')");
+    binds.desde = desde;
+  }
+  if (hasta) {
+    conditions.push("m.fecha_multa < TO_DATE(:hasta, 'YYYY-MM-DD') + 1");
+    binds.hasta = hasta;
+  }
+  if (idCasa) {
+    conditions.push("m.id_casa = :idCasa");
+    binds.idCasa = Number(idCasa);
+  }
+
+  const result = await executeQuery(`
+    SELECT m.id_multa, m.id_casa, c.numero_casa, c.bloque,
+           per.nombres || ' ' || per.apellidos AS propietario,
+           m.motivo, m.monto, m.fecha_multa, m.fecha_vencimiento, m.estado
+    FROM MULTA m
+    JOIN CASA c ON c.id_casa = m.id_casa
+    JOIN PERSONA per ON per.id_persona = c.id_propietario
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY m.fecha_multa DESC, m.id_multa DESC
+  `, binds);
+
+  return result.rows.map((row) => ({
+    idMulta: row.ID_MULTA,
+    idCasa: row.ID_CASA,
+    casa: row.NUMERO_CASA,
+    bloque: row.BLOQUE,
+    propietario: row.PROPIETARIO,
+    motivo: row.MOTIVO,
+    monto: Number(row.MONTO || 0),
+    fechaMulta: row.FECHA_MULTA,
+    fechaVencimiento: row.FECHA_VENCIMIENTO,
+    estado: row.ESTADO,
+  }));
+}
+
 async function createFine({ idCasa, motivo, monto, fechaVencimiento }, userId) {
   const result = await executeQuery(`
     INSERT INTO MULTA (
       id_casa, motivo, monto, fecha_multa, fecha_vencimiento,
       estado, creado_por
     ) VALUES (
-      :idCasa, :motivo, :monto, SYSDATE, :fechaVencimiento,
+      :idCasa, :motivo, :monto, TRUNC(SYSDATE), TO_DATE(:fechaVencimiento, 'YYYY-MM-DD'),
       'PENDIENTE', :userId
     ) RETURNING id_multa INTO :idMultaOut
   `, {
     idCasa: Number(idCasa),
     motivo: motivo.trim(),
     monto: Number(monto),
-    fechaVencimiento: new Date(fechaVencimiento),
+    fechaVencimiento,
     userId: Number(userId),
     idMultaOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   }, { autoCommit: true });
@@ -422,6 +484,7 @@ module.exports = {
   getAccountStatement,
   getGeneralStatement,
   getDelinquentHouses,
+  getActiveFines,
   createFine,
   submitPayment,
   updatePaymentStatus,

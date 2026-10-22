@@ -127,12 +127,14 @@ function ValidationTab() {
 
 function GeneralStatementTab() {
   const [rows, setRows] = useState([]);
+  const [houses, setHouses] = useState([]);
   const [error, setError] = useState("");
-  const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7));
+  const [filters, setFilters] = useState({ desde: "", hasta: "", idCasa: "" });
 
-  async function load() {
+  async function load(nextFilters = filters) {
     try {
-      const response = await api.get(`/pagos/estado-cuenta-general?periodo=${periodo}`);
+      const params = Object.fromEntries(Object.entries(nextFilters).filter(([, value]) => value));
+      const response = await api.get("/pagos/estado-cuenta-general", { params });
       setRows(response.data.data || []);
       setError("");
     } catch (err) {
@@ -142,17 +144,43 @@ function GeneralStatementTab() {
 
   useEffect(() => {
     load();
-  }, [periodo]);
+    api.get("/casas").then((response) => setHouses(response.data.data || []));
+  }, []);
+
+  function updateFilter(name, value) {
+    setFilters((current) => ({ ...current, [name]: value }));
+  }
+
+  function clearFilters() {
+    const emptyFilters = { desde: "", hasta: "", idCasa: "" };
+    setFilters(emptyFilters);
+    load(emptyFilters);
+  }
 
   return (
     <div className="finance-card">
-      <div className="finance-actions">
-        <label className="finance-muted">Periodo
-          <input type="month" value={periodo} onChange={(event) => setPeriodo(event.target.value)} />
-        </label>
+      <div className="finance-filter-section finance-form">
+        <div className="finance-filter-bar">
+          <label>Desde
+            <input type="date" value={filters.desde} onChange={(event) => updateFilter("desde", event.target.value)} />
+          </label>
+          <label>Hasta
+            <input type="date" value={filters.hasta} onChange={(event) => updateFilter("hasta", event.target.value)} />
+          </label>
+          <label>Casa
+            <select value={filters.idCasa} onChange={(event) => updateFilter("idCasa", event.target.value)}>
+              <option value="">Todas las casas</option>
+              {houses.map((house) => <option key={house.id} value={house.id}>{house.numeroCasa} - {house.propietario?.nombre}</option>)}
+            </select>
+          </label>
+          <div className="finance-actions">
+            <button className="finance-button" type="button" onClick={() => load()}>Filtrar</button>
+            <button className="finance-button secondary" type="button" onClick={clearFilters}>Limpiar</button>
+          </div>
+        </div>
       </div>
       {error && <p className="finance-error">{error}</p>}
-      {!rows.length ? <p className="finance-empty">No hay cuotas emitidas para el periodo seleccionado.</p> : (
+      {!rows.length ? <p className="finance-empty">No hay cuotas para los filtros seleccionados.</p> : (
         <div className="finance-list">
           {rows.map((row) => (
             <div className="finance-row" key={row.idCasa}>
@@ -171,17 +199,41 @@ function GeneralStatementTab() {
 function DelinquentTab() {
   const [rows, setRows] = useState([]);
   const [houses, setHouses] = useState([]);
+  const [filters, setFilters] = useState({ desde: "", hasta: "", idCasa: "" });
+  const [error, setError] = useState("");
   const [form, setForm] = useState({ idCasa: "", motivo: "Recargo por mora", monto: "", fechaVencimiento: "" });
   const [message, setMessage] = useState("");
+  const today = new Date();
+  const todayString = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
 
-  async function load() {
-    const response = await api.get("/pagos/morosos");
-    setRows(response.data.data || []);
+  async function load(nextFilters = filters) {
+    try {
+      const params = Object.fromEntries(Object.entries(nextFilters).filter(([, value]) => value));
+      const response = await api.get("/pagos/multas", { params });
+      setRows(response.data.data || []);
+      setError("");
+    } catch (err) {
+      setError(err.response?.data?.message || "No se pudieron cargar las moras.");
+    }
   }
   useEffect(() => {
     load();
     api.get("/casas").then((response) => setHouses(response.data.data || []));
   }, []);
+
+  function updateFilter(name, value) {
+    setFilters((current) => ({ ...current, [name]: value }));
+  }
+
+  function clearFilters() {
+    const emptyFilters = { desde: "", hasta: "", idCasa: "" };
+    setFilters(emptyFilters);
+    load(emptyFilters);
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -198,13 +250,37 @@ function DelinquentTab() {
   return (
     <div className="finance-form-grid">
       <div className="finance-card">
-        <h3>Casas morosas</h3>
-        {!rows.length ? <p className="finance-empty">No hay casas morosas.</p> : rows.map((row) => (
-          <div className="finance-row" key={row.idCasa}>
-            <div><div className="finance-strong">Casa {row.casa}</div><div className="finance-muted">{row.responsable}</div></div>
-            <div>{money(row.totalAdeudado)}</div>
-            <div>{row.diasMora} días de mora</div>
-            <span className="finance-badge danger">MOROSO</span>
+        <h3>Moras actuales</h3>
+        <div className="finance-form">
+          <div className="finance-form-grid">
+            <label>Desde<input type="date" value={filters.desde} onChange={(e) => updateFilter("desde", e.target.value)} /></label>
+            <label>Hasta<input type="date" value={filters.hasta} onChange={(e) => updateFilter("hasta", e.target.value)} /></label>
+          </div>
+          <label>Casa
+            <select value={filters.idCasa} onChange={(e) => updateFilter("idCasa", e.target.value)}>
+              <option value="">Todas las casas</option>
+              {houses.map((house) => <option key={house.id} value={house.id}>{house.numeroCasa} - {house.propietario?.nombre}</option>)}
+            </select>
+          </label>
+          <div className="finance-actions">
+            <button className="finance-button" type="button" onClick={() => load()}>Filtrar</button>
+            <button className="finance-button secondary" type="button" onClick={clearFilters}>Limpiar</button>
+          </div>
+        </div>
+        {error && <p className="finance-error">{error}</p>}
+        {!rows.length ? <p className="finance-empty">No hay moras actuales para los filtros seleccionados.</p> : rows.map((row) => (
+          <div className="finance-row" key={row.idMulta}>
+            <div>
+              <div className="finance-strong">Casa {row.casa}</div>
+              <div className="finance-muted">{row.propietario}</div>
+              <div className="finance-muted">{row.motivo}</div>
+            </div>
+            <div className="finance-strong">{money(row.monto)}</div>
+            <div className="finance-muted">
+              Emisión: {new Date(row.fechaMulta).toLocaleDateString("es-GT")}<br />
+              Vence: {new Date(row.fechaVencimiento).toLocaleDateString("es-GT")}
+            </div>
+            <span className="finance-badge danger">{row.estado}</span>
           </div>
         ))}
       </div>
@@ -220,7 +296,7 @@ function DelinquentTab() {
         <label>Motivo<input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} required /></label>
         <div className="finance-form-grid">
           <label>Monto (Q)<input type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} required /></label>
-          <label>Vence<input type="date" value={form.fechaVencimiento} onChange={(e) => setForm({ ...form, fechaVencimiento: e.target.value })} required /></label>
+          <label>Vence<input type="date" min={todayString} value={form.fechaVencimiento} onChange={(e) => setForm({ ...form, fechaVencimiento: e.target.value })} required /></label>
         </div>
         <button className="finance-button" type="submit">Emitir recargo</button>
       </form>

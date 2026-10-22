@@ -56,6 +56,17 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+.finance-filter-section {
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #e4e7ec;
+}
+.finance-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(220px, 1.5fr) auto;
+  gap: 14px;
+  align-items: end;
+}
 .finance-form label { display: grid; gap: 6px; color: #344054; font-size: 13px; font-weight: 600; }
 .finance-form input, .finance-form select, .finance-form textarea {
   width: 100%;
@@ -104,5 +115,5 @@
 .finance-modal textarea { width: 100%; min-height: 110px; box-sizing: border-box; padding: 10px; border: 1px solid #d0d5dd; border-radius: 8px; resize: vertical; }
 .finance-close { border: 0; background: transparent; font-size: 24px; cursor: pointer; color: #667085; }
 @media (max-width: 800px) {
-  .finance-row, .finance-form-grid { grid-template-columns: 1fr; }
+  .finance-row, .finance-form-grid, .finance-filter-bar { grid-template-columns: 1fr; }
 }
