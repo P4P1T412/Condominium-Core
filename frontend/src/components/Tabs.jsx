@@ -24,15 +24,18 @@ export default function Tabs({ tabs, defaultTab, activeTab: controlledTab, onTab
     <div className="tabs-container">
       {/* Barra superior de pestañas */}
       <div className="tabs-bar" role="tablist">
-        {tabs.map((tab) => {
+        {tabs.filter((tab) => tab.visible !== false).map((tab) => {
           const isActive = selectedTab === tab.id;
           return (
             <button
               key={tab.id}
               role="tab"
+              disabled={tab.disabled}
               aria-selected={isActive}
+              aria-disabled={tab.disabled}
               className={`tabs-bar__item ${isActive ? "tabs-bar__item--active" : ""}`}
               onClick={() => {
+                if (tab.disabled) return;
                 setActiveTab(tab.id);
                 onTabChange?.(tab.id);
               }}

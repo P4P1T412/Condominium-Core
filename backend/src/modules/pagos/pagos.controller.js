@@ -117,11 +117,11 @@ async function createFine(req, res, next) {
 async function submit(req, res, next) {
   try {
     const { idCuota, monto, fechaPago, metodo, referencia } = req.body;
-    if (!idCuota || !monto || !fechaPago || !metodo || !req.file) {
+    if ((!idCuota && !req.body.idMulta) || !monto || !fechaPago || !metodo || !req.file) {
       return res.status(400).json({
         success: false,
         code: "VALIDATION_ERROR",
-        message: "Cuota, monto, fecha, método y comprobante son obligatorios.",
+        message: "Cuota o mora, monto, fecha, método y comprobante son obligatorios.",
       });
     }
     const data = await pagosService.submitPayment({

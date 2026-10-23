@@ -11,6 +11,12 @@
   gap: 10px;
 }
 
+.finance-account-list {
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
 .finance-row {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr auto;
