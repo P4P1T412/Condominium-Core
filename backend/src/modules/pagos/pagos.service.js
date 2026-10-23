@@ -22,6 +22,68 @@ function mapPayment(row) {
   };
 }
 
+/**
+ * Resuelve de forma robusta la persona asociada a la sesión.
+ *
+ * El token puede venir de versiones anteriores con `personaId` ausente o con
+ * un identificador desalineado. La tabla USUARIO es la fuente de verdad para
+ * relacionar id_usuario -> id_persona, por lo que se prioriza cuando existe.
+ * Si no, se valida el id recibido como PERSONA o, como último recurso, como
+ * id_usuario. Devuelve siempre el id_persona correcto para filtrar el padrón.
+ *
+ * @param {number|object} identity - id_persona o { personaId, userId }.
+ * @returns {Promise<number>} id_persona canónico.
+ */
+async function resolvePersonaId(identity) {
+  const data = identity && typeof identity === "object"
+    ? identity
+    : { personaId: identity };
+
+  const userId = data.userId !== undefined && data.userId !== null && data.userId !== ""
+    ? Number(data.userId)
+    : null;
+  const personaId = data.personaId !== undefined && data.personaId !== null && data.personaId !== ""
+    ? Number(data.personaId)
+    : null;
+
+  if (userId !== null && Number.isFinite(userId)) {
+    const byUser = await executeQuery(`
+      SELECT id_persona FROM USUARIO WHERE id_usuario = :userId
+    `, { userId });
+
+    if (byUser.rows.length > 0 && byUser.rows[0].ID_PERSONA != null) {
+      return byUser.rows[0].ID_PERSONA;
+    }
+  }
+
+  if (personaId !== null && Number.isFinite(personaId)) {
+    const byPersona = await executeQuery(`
+      SELECT id_persona FROM PERSONA WHERE id_persona = :personaId
+    `, { personaId });
+
+    if (byPersona.rows.length > 0) {
+      return byPersona.rows[0].ID_PERSONA;
+    }
+
+    // Compatibilidad: algunas sesiones antiguas guardaron id_usuario en el
+    // campo personaId. Si ese id existe como usuario, se usa su persona real.
+    if (personaId !== userId) {
+      const fallbackUser = await executeQuery(`
+        SELECT id_persona FROM USUARIO WHERE id_usuario = :personaId
+      `, { personaId });
+
+      if (fallbackUser.rows.length > 0 && fallbackUser.rows[0].ID_PERSONA != null) {
+        return fallbackUser.rows[0].ID_PERSONA;
+      }
+    }
+  }
+
+  const error = new Error("No se pudo identificar la persona asociada a su sesión.");
+  error.statusCode = 401;
+  error.code = "PERSONA_NOT_FOUND";
+  throw error;
+}
+
 async function getPendingPayments() {
   const result = await executeQuery(`
     SELECT p.id_pago, p.id_cuota, c.numero_casa, c.bloque,
@@ -160,8 +222,26 @@ async function ensureMonthlyFees(personaId) {
       WHERE ROWNUM = 1
     `, { idCasa: house.ID_CASA });
 
-    if (!templateResult.rows.length) continue;
-    const template = templateResult.rows[0];
+    let template = templateResult.rows[0];
+
+    // Una vivienda recién vinculada puede no tener todavía una cuota propia.
+    // En ese caso se toma como referencia la última cuota periódica del
+    // condominio para que su estado de cuenta no quede vacío.
+    if (!template) {
+      const fallbackTemplateResult = await executeQuery(`
+        SELECT concepto, monto_total, creado_por
+        FROM (
+          SELECT concepto, monto_total, creado_por
+          FROM CUOTA
+          WHERE id_multa IS NULL
+          ORDER BY periodo DESC, id_cuota DESC
+        )
+        WHERE ROWNUM = 1
+      `);
+      template = fallbackTemplateResult.rows[0];
+    }
+
+    if (!template) continue;
 
     for (let month = 1; month <= currentMonth; month += 1) {
       const periodo = `${currentYear}-${String(month).padStart(2, "0")}`;
@@ -194,10 +274,11 @@ async function ensureMonthlyFees(personaId) {
   }
 }
 
-async function getAccountStatement(personaId) {
+async function getAccountStatement(identity) {
+  const personaId = await resolvePersonaId(identity);
   await ensureMonthlyFees(personaId);
   const result = await executeQuery(`${ACCOUNT_QUERY} ORDER BY fecha_vencimiento DESC`, {
-    personaId: Number(personaId),
+    personaId,
   });
   return result.rows.map(mapAccount);
 }
@@ -342,7 +423,9 @@ async function createFine({ idCasa, motivo, monto, fechaVencimiento }, userId) {
   return { idMulta: result.outBinds.idMultaOut[0] };
 }
 
-async function submitPayment({ idCuota, monto, fechaPago, metodo, referencia, comprobanteUrl }, personaId) {
+async function submitPayment({ idCuota, monto, fechaPago, metodo, referencia, comprobanteUrl }, identity) {
+  const personaId = await resolvePersonaId(identity);
+
   const ownership = await executeQuery(`
     SELECT cu.id_cuota
     FROM CUOTA cu

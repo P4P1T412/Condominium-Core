@@ -17,37 +17,47 @@ const { executeQuery } = require("../../config/db");
  * @returns {Promise<Array>} Lista de casas registradas.
  */
 async function getAllCasas(filters = {}) {
+  // El estado se calcula a partir del censo activo para que el catálogo no
+  // dependa de que la columna CASA.estado haya quedado sincronizada.
   let query = `
-    SELECT 
-      c.id_casa,
-      c.numero_casa,
-      c.bloque,
-      c.direccion,
-      c.estado,
-      c.fecha_creacion,
-      p.id_persona AS id_propietario,
-      p.nombres || ' ' || p.apellidos AS propietario_nombre,
-      p.telefono AS propietario_telefono,
-      p.correo AS propietario_correo,
-      (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes
-    FROM CASA c
-    JOIN PERSONA p ON c.id_propietario = p.id_persona
+    WITH casas_estado AS (
+      SELECT
+        c.id_casa,
+        c.numero_casa,
+        c.bloque,
+        c.direccion,
+        CASE
+          WHEN c.estado = 'INACTIVA' THEN 'INACTIVA'
+          WHEN (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') > 0
+            THEN 'OCUPADA'
+          ELSE 'DISPONIBLE'
+        END AS estado,
+        c.fecha_creacion,
+        p.id_persona AS id_propietario,
+        p.nombres || ' ' || p.apellidos AS propietario_nombre,
+        p.telefono AS propietario_telefono,
+        p.correo AS propietario_correo,
+        (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes
+      FROM CASA c
+      JOIN PERSONA p ON c.id_propietario = p.id_persona
+    )
+    SELECT * FROM casas_estado
     WHERE 1=1
   `;
 
   const binds = {};
 
   if (filters.estado) {
-    query += ` AND c.estado = :estado`;
+    query += ` AND estado = :estado`;
     binds.estado = filters.estado;
   }
 
   if (filters.bloque) {
-    query += ` AND UPPER(c.bloque) = UPPER(:bloque)`;
+    query += ` AND UPPER(bloque) = UPPER(:bloque)`;
     binds.bloque = filters.bloque;
   }
 
-  query += ` ORDER BY c.bloque ASC, c.numero_casa ASC`;
+  query += ` ORDER BY bloque ASC, numero_casa ASC`;
 
   const result = await executeQuery(query, binds);
 
@@ -81,7 +91,13 @@ async function getCasaById(idCasa) {
       c.numero_casa,
       c.bloque,
       c.direccion,
-      c.estado,
+      CASE
+        WHEN c.estado = 'INACTIVA' THEN 'INACTIVA'
+        WHEN (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') > 0
+          THEN 'OCUPADA'
+        ELSE 'DISPONIBLE'
+      END AS estado,
+      (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes,
       p.id_persona AS id_propietario,
       p.nombres || ' ' || p.apellidos AS propietario_nombre,
       p.telefono,
@@ -131,6 +147,7 @@ async function getCasaById(idCasa) {
     bloque: casa.BLOQUE,
     direccion: casa.DIRECCION,
     estado: casa.ESTADO,
+    totalHabitantes: casa.TOTAL_HABITANTES,
     propietario: {
       id: casa.ID_PROPIETARIO,
       nombre: casa.PROPIETARIO_NOMBRE,
@@ -197,6 +214,32 @@ async function createCasa(casaData, userId) {
 }
 
 /**
+ * Recalcula y persiste el estado de ocupación de una vivienda a partir de su
+ * censo activo. Se invoca después de vincular o desvincular habitantes para
+ * que el catálogo y el censo mantengan la misma información.
+ *
+ * @param {number} idCasa - ID de la vivienda a sincronizar.
+ */
+async function sincronizarEstadoCasa(idCasa) {
+  const updateSql = `
+    UPDATE CASA c
+    SET estado = CASE
+      WHEN c.estado = 'INACTIVA' THEN 'INACTIVA'
+      WHEN EXISTS (
+        SELECT 1
+        FROM RESIDENTE r
+        WHERE r.id_casa = c.id_casa
+          AND r.estado = 'ACTIVO'
+      ) THEN 'OCUPADA'
+      ELSE 'DISPONIBLE'
+    END
+    WHERE c.id_casa = :idCasa
+  `;
+
+  await executeQuery(updateSql, { idCasa: Number(idCasa) }, { autoCommit: true });
+}
+
+/**
  * Asocia un residente físico (familiar o inquilino) a una vivienda.
  *
  * Como la tabla RESIDENTE conserva el histórico (desvinculaciones mediante
@@ -251,6 +294,8 @@ async function addResidenteToCasa(idCasa, residenteData) {
       { autoCommit: true }
     );
 
+    await sincronizarEstadoCasa(idCasa);
+
     return {
       id: existente.ID_RESIDENTE,
       message: "Residente reconectado a la vivienda.",
@@ -283,6 +328,8 @@ async function addResidenteToCasa(idCasa, residenteData) {
   };
 
   const result = await executeQuery(insertSql, binds, { autoCommit: true });
+  await sincronizarEstadoCasa(idCasa);
+
   return { id: result.outBinds.id_residente_out[0], message: "Residente asociado a la vivienda." };
 }
 
@@ -318,6 +365,8 @@ async function removeResidenteFromCasa(idCasa, idResidente) {
     error.code = "RESIDENT_NOT_FOUND";
     throw error;
   }
+
+  await sincronizarEstadoCasa(idCasa);
 
   return { message: "Residente desvinculado de la vivienda correctamente." };
 }
@@ -405,6 +454,7 @@ async function updateCasa(idCasa, casaData) {
   };
 
   await executeQuery(updateSql, binds, { autoCommit: true });
+  await sincronizarEstadoCasa(idCasa);
 
   return { message: "Casa actualizada correctamente." };
 }

@@ -77,6 +77,8 @@ JOIN PERSONA p ON r.id_persona = p.id_persona;
 -- =====================================================================
 -- PROCEDIMIENTO: Registrar Pago de Mantenimiento con Auditoría Automática
 -- =====================================================================
+BEGIN
+    EXECUTE IMMEDIATE q'[
 CREATE OR REPLACE PROCEDURE SP_REGISTRAR_PAGO (
     p_id_cuota         IN NUMBER,
     p_monto            IN NUMBER,
@@ -130,3 +132,5 @@ EXCEPTION
         ROLLBACK;
         RAISE;
 END SP_REGISTRAR_PAGO;
+    ]';
+END;

@@ -153,14 +153,23 @@ export default function CatalogoCasas() {
         <div style={styles.emptyState}>No hay viviendas registradas en el sistema.</div>
       ) : (
         <div style={styles.grid}>
-          {casas.map((casa) => (
+          {casas.map((casa) => {
+            // El censo es la fuente de verdad: si hay habitantes activos la
+            // vivienda se muestra ocupada aunque el estado persistido esté viejo.
+            const estadoVisual = casa.estado === "INACTIVA"
+              ? "INACTIVA"
+              : Number(casa.totalHabitantes) > 0
+                ? "OCUPADA"
+                : "DISPONIBLE";
+
+            return (
             <div key={casa.id} style={styles.card}>
               <div style={styles.cardHeader}>
                 <div>
                   <h3 style={styles.cardTitle}>Casa {casa.numeroCasa}</h3>
                   <span style={styles.cardSubtitle}>Bloque {casa.bloque}</span>
                 </div>
-                <StatusBadge status={casa.estado} />
+                <StatusBadge status={estadoVisual} />
               </div>
 
               <div style={styles.cardBody}>
@@ -195,7 +204,8 @@ export default function CatalogoCasas() {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

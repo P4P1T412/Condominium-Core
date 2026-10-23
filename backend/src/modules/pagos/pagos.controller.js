@@ -11,7 +11,13 @@ async function getPending(req, res, next) {
 
 async function getStatement(req, res, next) {
   try {
-    res.json({ success: true, data: await pagosService.getAccountStatement(req.user.personaId) });
+    res.json({
+      success: true,
+      data: await pagosService.getAccountStatement({
+        personaId: req.user.personaId,
+        userId: req.user.userId,
+      }),
+    });
   } catch (error) {
     next(error);
   }
@@ -121,7 +127,10 @@ async function submit(req, res, next) {
     const data = await pagosService.submitPayment({
       ...req.body,
       comprobanteUrl: req.file ? `/uploads/comprobantes/${req.file.filename}` : null,
-    }, req.user.personaId);
+    }, {
+      personaId: req.user.personaId,
+      userId: req.user.userId,
+    });
     return res.status(201).json({ success: true, data });
   } catch (error) {
     next(error);

@@ -1,4 +1,15 @@
 -- =====================================================================
+-- NOTA DE EJECUCIÓN EN DBEAVER
+-- Cada trigger se define dentro de un bloque PL/SQL anónimo mediante
+-- EXECUTE IMMEDIATE. Así puede ejecutarse de forma individual (seleccione
+-- el bloque y use Ctrl+Enter) o ejecutar todo el archivo como script
+-- (Alt+X), sin depender de líneas "/" como separador.
+-- =====================================================================
+
+
+BEGIN
+    EXECUTE IMMEDIATE q'[
+-- =====================================================================
 -- 1. Validar que un pago con estado 'VALIDO' no exceda el saldo.
 -- Se usa compound trigger porque consultar PAGO desde un trigger fila a fila
 -- provoca ORA-04091 (tabla mutante) al aprobar un comprobante.
@@ -54,8 +65,11 @@ COMPOUND TRIGGER
         END LOOP;
     END AFTER STATEMENT;
 END trg_pago_validar_monto;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 2. Compound Trigger para actualizar CUOTA sin mutación de tabla (ORA-04091)
 -- =====================================================================
@@ -94,8 +108,11 @@ COMPOUND TRIGGER
         END LOOP;
     END AFTER STATEMENT;
 END trg_pago_actualizar_cuota;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 3. Sincronizar estado de Multa con su Cuota
 -- =====================================================================
@@ -110,8 +127,11 @@ BEGIN
         UPDATE MULTA SET estado = 'ANULADA' WHERE id_multa = :NEW.id_multa;
     END IF;
 END;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 4. Validar Capacidad de Área Común al Reservar
 -- =====================================================================
@@ -126,8 +146,11 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20010, 'La cantidad de personas excede la capacidad maxima (' || v_capacidad || ') del area.');
     END IF;
 END;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 5. Compound Trigger para Cruces de Horario en Reservaciones
 -- =====================================================================
@@ -179,8 +202,11 @@ COMPOUND TRIGGER
         END LOOP;
     END AFTER STATEMENT;
 END trg_reservacion_horario;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 6. Máquina de Estados de Accesos en Garita (Entrada/Salida Alternada)
 -- =====================================================================
@@ -216,8 +242,11 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20021, 'Movimiento invalido. Debe alternar entre ENTRADA y SALIDA.');
     END IF;
 END;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 -- =====================================================================
 -- 7. Triggers de Auditoría Automática para fecha_modificacion
 -- =====================================================================
@@ -227,19 +256,82 @@ FOR EACH ROW
 BEGIN
     :NEW.fecha_modificacion := SYSTIMESTAMP;
 END;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 CREATE OR REPLACE TRIGGER trg_pago_audit_fecha
 BEFORE UPDATE ON PAGO
 FOR EACH ROW
 BEGIN
     :NEW.fecha_modificacion := SYSTIMESTAMP;
 END;
+    ]';
+END;
 
-
+BEGIN
+    EXECUTE IMMEDIATE q'[
 CREATE OR REPLACE TRIGGER trg_cuota_audit_fecha
 BEFORE UPDATE ON CUOTA
 FOR EACH ROW
 BEGIN
     :NEW.fecha_modificacion := SYSTIMESTAMP;
+END;
+    ]';
+END;
+
+BEGIN
+    EXECUTE IMMEDIATE q'[
+-- =====================================================================
+-- 8. Sincronizar el estado de CASA al vincular o desvincular residentes.
+-- Se usa un compound trigger para consultar RESIDENTE solo en AFTER
+-- STATEMENT y evitar ORA-04091 (tabla mutante) en operaciones masivas.
+-- =====================================================================
+CREATE OR REPLACE TRIGGER trg_residente_sync_casa_estado
+FOR INSERT OR UPDATE OF estado, id_casa OR DELETE ON RESIDENTE
+COMPOUND TRIGGER
+    TYPE t_casas IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+    v_casas t_casas;
+    v_contador PLS_INTEGER := 0;
+
+    PROCEDURE registrar_casa(p_id_casa NUMBER) IS
+    BEGIN
+        IF p_id_casa IS NOT NULL THEN
+            v_contador := v_contador + 1;
+            v_casas(v_contador) := p_id_casa;
+        END IF;
+    END registrar_casa;
+
+    AFTER EACH ROW IS
+    BEGIN
+        IF INSERTING THEN
+            registrar_casa(:NEW.id_casa);
+        ELSIF DELETING THEN
+            registrar_casa(:OLD.id_casa);
+        ELSIF UPDATING THEN
+            registrar_casa(:OLD.id_casa);
+            registrar_casa(:NEW.id_casa);
+        END IF;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        FOR i IN 1 .. v_contador LOOP
+            UPDATE CASA c
+            SET estado = CASE
+                    WHEN c.estado = 'INACTIVA' THEN 'INACTIVA'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM RESIDENTE r
+                        WHERE r.id_casa = c.id_casa
+                          AND r.estado = 'ACTIVO'
+                    ) THEN 'OCUPADA'
+                    ELSE 'DISPONIBLE'
+                END
+            WHERE c.id_casa = v_casas(i);
+        END LOOP;
+    END AFTER STATEMENT;
+END;
+    ]';
 END;
