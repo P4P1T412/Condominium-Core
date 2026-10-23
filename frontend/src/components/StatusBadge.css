@@ -1,0 +1,39 @@
+/* Insignia base tipo píldora */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+}
+
+/* Variantes cromáticas */
+.status-badge--green {
+  background-color: #DCFCE7;
+  color: #166534;
+}
+
+.status-badge--blue {
+  background-color: #DBEAFE;
+  color: #1E40AF;
+}
+
+.status-badge--amber {
+  background-color: #FEF3C7;
+  color: #92400E;
+}
+
+.status-badge--gray {
+  background-color: #F1F5F9;
+  color: #475569;
+}
+
+.status-badge--red {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
