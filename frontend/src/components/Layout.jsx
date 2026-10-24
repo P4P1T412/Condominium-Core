@@ -11,8 +11,7 @@ export default function Layout() {
   }
 
   const userRole = (user?.rol || user?.role || "").toLowerCase();
-
-  // Matriz de navegación acordada por rol
+// Matriz de navegación acordada por rol
   const menusByRole = {
     administrador: [
       {
@@ -58,7 +57,7 @@ export default function Layout() {
         ),
       },
       {
-        to: "/garita",
+        to: "/visitas",
         label: "Garita y Seguridad",
         icon: (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -103,8 +102,8 @@ export default function Layout() {
     ],
     garita: [
       {
-        to: "/garita",
-        label: "Control de Accesos",
+        to: "/visitas",
+        label: "Garita y Seguridad",
         icon: (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />

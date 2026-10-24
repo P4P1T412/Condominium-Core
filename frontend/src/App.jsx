@@ -12,6 +12,7 @@ import Notificaciones from "./modules/notificaciones/Notificaciones";
 import Garita from "./modules/seguridad/Garita";
 import ProtectedRoute from "./routes/ProtectedRoute";
 import UsuariosPage from "./modules/usuarios/UsuariosPage";
+import VisitasPage from "./modules/visitas/VisitasPage";
 
 export default function App() {
   return (
@@ -44,7 +45,7 @@ export default function App() {
             }
           />
 
-          {/* Compartidas / Condómino */}
+          {/* Compartidas / Condómino / Garita */}
           <Route
             path="/pagos"
             element={
@@ -56,18 +57,15 @@ export default function App() {
           <Route
             path="/visitas"
             element={
-              <ProtectedRoute allowedRoles={["condomino"]}>
-                <div style={{ padding: "20px" }}>
-                  <h2>Mis Visitas Anticipadas</h2>
-                  <p style={{ color: "#667085" }}>Registro de visitas autorizadas para garita.</p>
-                </div>
+              <ProtectedRoute allowedRoles={["administrador", "condomino", "garita"]}>
+                <VisitasPage />
               </ProtectedRoute>
             }
           />
           <Route
             path="/notificaciones"
             element={
-              <ProtectedRoute allowedRoles={["administrador", "condomino"]}>
+              <ProtectedRoute allowedRoles={["administrador", "condomino", "garita"]}>
                 <Notificaciones />
               </ProtectedRoute>
             }
