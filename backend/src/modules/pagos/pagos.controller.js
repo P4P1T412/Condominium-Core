@@ -11,7 +11,13 @@ async function getPending(req, res, next) {
 
 async function getStatement(req, res, next) {
   try {
-    res.json({ success: true, data: await pagosService.getAccountStatement(req.user.personaId) });
+    res.json({
+      success: true,
+      data: await pagosService.getAccountStatement({
+        personaId: req.user.personaId,
+        userId: req.user.userId,
+      }),
+    });
   } catch (error) {
     next(error);
   }
@@ -19,7 +25,25 @@ async function getStatement(req, res, next) {
 
 async function getGeneral(req, res, next) {
   try {
-    res.json({ success: true, data: await pagosService.getGeneralStatement(req.query.periodo) });
+    const { periodo, desde, hasta, idCasa } = req.query;
+    if (desde && !isValidDateString(desde) || hasta && !isValidDateString(hasta)) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_DATE",
+        message: "Las fechas del filtro deben tener el formato AAAA-MM-DD.",
+      });
+    }
+    if (desde && hasta && desde > hasta) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_DATE_RANGE",
+        message: "La fecha inicial no puede ser posterior a la fecha final.",
+      });
+    }
+    res.json({
+      success: true,
+      data: await pagosService.getGeneralStatement({ periodo, desde, hasta, idCasa }),
+    });
   } catch (error) {
     next(error);
   }
@@ -28,6 +52,29 @@ async function getGeneral(req, res, next) {
 async function getDelinquent(req, res, next) {
   try {
     res.json({ success: true, data: await pagosService.getDelinquentHouses() });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getActiveFines(req, res, next) {
+  try {
+    const { desde, hasta, idCasa } = req.query;
+    if (desde && !isValidDateString(desde) || hasta && !isValidDateString(hasta)) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_DATE",
+        message: "Las fechas del filtro deben tener el formato AAAA-MM-DD.",
+      });
+    }
+    if (desde && hasta && desde > hasta) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_DATE_RANGE",
+        message: "La fecha inicial no puede ser posterior a la fecha final.",
+      });
+    }
+    res.json({ success: true, data: await pagosService.getActiveFines({ desde, hasta, idCasa }) });
   } catch (error) {
     next(error);
   }
@@ -43,6 +90,23 @@ async function createFine(req, res, next) {
         message: "Casa, motivo, monto y fecha de vencimiento son obligatorios.",
       });
     }
+    const dateParts = typeof fechaVencimiento === "string"
+      ? fechaVencimiento.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      : null;
+    const parsedDate = dateParts
+      ? new Date(Date.UTC(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3])))
+      : null;
+    const isValidDate = parsedDate
+      && parsedDate.getUTCFullYear() === Number(dateParts[1])
+      && parsedDate.getUTCMonth() === Number(dateParts[2]) - 1
+      && parsedDate.getUTCDate() === Number(dateParts[3]);
+    if (!isValidDate) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_DATE",
+        message: "La fecha de vencimiento debe tener el formato AAAA-MM-DD.",
+      });
+    }
     const data = await pagosService.createFine(req.body, req.user.userId);
     return res.status(201).json({ success: true, data });
   } catch (error) {
@@ -53,17 +117,20 @@ async function createFine(req, res, next) {
 async function submit(req, res, next) {
   try {
     const { idCuota, monto, fechaPago, metodo, referencia } = req.body;
-    if (!idCuota || !monto || !fechaPago || !metodo || !req.file) {
+    if ((!idCuota && !req.body.idMulta) || !monto || !fechaPago || !metodo || !req.file) {
       return res.status(400).json({
         success: false,
         code: "VALIDATION_ERROR",
-        message: "Cuota, monto, fecha, método y comprobante son obligatorios.",
+        message: "Cuota o mora, monto, fecha, método y comprobante son obligatorios.",
       });
     }
     const data = await pagosService.submitPayment({
       ...req.body,
       comprobanteUrl: req.file ? `/uploads/comprobantes/${req.file.filename}` : null,
-    }, req.user.personaId);
+    }, {
+      personaId: req.user.personaId,
+      userId: req.user.userId,
+    });
     return res.status(201).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -221,11 +288,21 @@ async function attachment(req, res, next) {
   }
 }
 
+function isValidDateString(value) {
+  const parts = typeof value === "string" ? value.match(/^(\d{4})-(\d{2})-(\d{2})$/) : null;
+  if (!parts) return false;
+  const date = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])));
+  return date.getUTCFullYear() === Number(parts[1])
+    && date.getUTCMonth() === Number(parts[2]) - 1
+    && date.getUTCDate() === Number(parts[3]);
+}
+
 module.exports = {
   getPending,
   getStatement,
   getGeneral,
   getDelinquent,
+  getActiveFines,
   createFine,
   submit,
   validate,

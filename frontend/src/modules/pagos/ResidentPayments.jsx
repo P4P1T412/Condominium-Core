@@ -15,7 +15,7 @@ function formatPeriod(periodo) {
   return `${MONTHS[Number(match[2]) - 1] || match[2]} ${match[1]}`;
 }
 
-function StatementTab({ rows, loading, error, onRefresh, onApplyPayment, onViewRequest }) {
+function StatementTab({ rows, loading, error, onApplyPayment, onViewRequest }) {
   function downloadReceipt(idPago) {
     api.get(`/pagos/${idPago}/recibo`, { responseType: "blob" }).then((response) => {
       const url = URL.createObjectURL(response.data);
@@ -29,12 +29,11 @@ function StatementTab({ rows, loading, error, onRefresh, onApplyPayment, onViewR
 
   return (
     <div className="finance-card">
-      <div className="finance-actions"><button className="finance-button secondary" onClick={onRefresh}>Actualizar</button></div>
       {error && <p className="finance-error">{error}</p>}
       {loading ? <p className="finance-empty">Cargando estado de cuenta...</p> : !rows.length ? (
         <p className="finance-empty">No hay cuotas asociadas a su cuenta.</p>
       ) : (
-        <div className="finance-list">
+        <div className="finance-list finance-account-list">
           {rows.map((row) => (
             <div className="finance-row" key={`${row.tipo}-${row.idCuota || row.idMulta}`}>
               <div><div className="finance-strong">{row.concepto}</div><div className="finance-muted">Casa {row.casa} · {row.periodo}</div></div>
@@ -44,7 +43,7 @@ function StatementTab({ rows, loading, error, onRefresh, onApplyPayment, onViewR
                 <span className={`finance-badge ${row.estadoPago === "PENDIENTE" ? "warning" : row.estadoPago === "RECHAZADO" ? "danger" : row.estado === "VENCIDA" ? "danger" : row.estado === "PENDIENTE" ? "warning" : ""}`}>
                   {row.estadoPago === "PENDIENTE" ? "PENDIENTE DE AUTORIZACIÓN" : row.estadoPago === "RECHAZADO" ? "PAGO RECHAZADO" : row.estado}
                 </span>
-                {row.estado === "VENCIDA" && row.estadoPago !== "PENDIENTE" && <button className="finance-button" onClick={() => onApplyPayment(row)}>Aplicar pago</button>}
+                {row.aplicable && row.saldo > 0 && <button className="finance-button" onClick={() => onApplyPayment(row)}>Aplicar pago</button>}
                 {row.estadoPago && <button className="finance-button secondary" onClick={() => onViewRequest(row)}>Ver solicitud</button>}
                 {row.idPago && <button className="finance-button secondary" onClick={() => downloadReceipt(row.idPago)}>Recibo</button>}
               </div>
@@ -57,7 +56,7 @@ function StatementTab({ rows, loading, error, onRefresh, onApplyPayment, onViewR
 }
 
 function PaymentForm({ rows, selectedRow, onSubmitted }) {
-  const [form, setForm] = useState({ idCuota: selectedRow?.idCuota || "", monto: selectedRow?.saldo || "", fechaPago: new Date().toISOString().slice(0, 10), metodo: "TRANSFERENCIA", referencia: "" });
+  const [form, setForm] = useState({ idCuota: selectedRow?.idCuota || "", idMulta: selectedRow?.idMulta || "", monto: selectedRow?.saldo || "", fechaPago: new Date().toISOString().slice(0, 10), metodo: "TRANSFERENCIA", referencia: "" });
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
   const applicable = rows
@@ -65,15 +64,16 @@ function PaymentForm({ rows, selectedRow, onSubmitted }) {
     .sort((first, second) => String(first.periodo).localeCompare(String(second.periodo)));
   useEffect(() => {
     if (selectedRow) {
-      setForm((current) => ({ ...current, idCuota: selectedRow.idCuota, monto: selectedRow.saldo }));
+      setForm((current) => ({ ...current, idCuota: selectedRow.idCuota || "", idMulta: selectedRow.idMulta || "", monto: selectedRow.saldo }));
     }
   }, [selectedRow]);
 
   function selectPeriod(event) {
-    const row = applicable.find((item) => String(item.idCuota) === event.target.value);
+    const row = applicable.find((item) => String(item.idCuota || `multa-${item.idMulta}`) === event.target.value);
     setForm((current) => ({
       ...current,
-      idCuota: event.target.value,
+      idCuota: row?.idCuota || "",
+      idMulta: row?.idMulta || "",
       monto: row?.saldo || "",
     }));
   }
@@ -103,10 +103,13 @@ function PaymentForm({ rows, selectedRow, onSubmitted }) {
       <h3>Reportar pago</h3>
       <p className="finance-muted">Adjunta tu comprobante para que administración lo valide.</p>
       {message && <p className="finance-muted">{message}</p>}
-      <label>Cuota
-        <select value={form.idCuota} onChange={selectPeriod} required>
-          <option value="">Seleccione el periodo</option>
-          {applicable.map((row) => <option key={row.idCuota} value={row.idCuota}>{row.casa} · {formatPeriod(row.periodo)} · saldo {money(row.saldo)}</option>)}
+      <label>Cargo
+        <select value={form.idCuota || (form.idMulta ? `multa-${form.idMulta}` : "")} onChange={selectPeriod} required>
+          <option value="">Seleccione el cargo</option>
+          {applicable.map((row) => {
+            const value = row.idCuota || `multa-${row.idMulta}`;
+            return <option key={value} value={value}>{row.casa} · {row.tipo === "MULTA" ? row.concepto : formatPeriod(row.periodo)} · saldo {money(row.saldo)}</option>;
+          })}
         </select>
       </label>
       <div className="finance-form-grid">
@@ -160,8 +163,8 @@ export default function ResidentPayments() {
   }
 
   const tabs = [
-    { id: "statement", label: "Estado de Cuenta", content: <StatementTab rows={rows} loading={loading} error={error} onRefresh={load} onApplyPayment={applyPayment} onViewRequest={viewRequest} /> },
-    { id: "payment", label: "Aplicar Pago", content: <PaymentForm rows={rows} selectedRow={selectedRow} onSubmitted={handleSubmitted} /> },
+    { id: "statement", label: "Estado de Cuenta", content: <StatementTab rows={rows} loading={loading} error={error} onApplyPayment={applyPayment} onViewRequest={viewRequest} /> },
+    { id: "payment", label: "Aplicar Pago", disabled: activeTab !== "payment", content: <PaymentForm rows={rows} selectedRow={selectedRow} onSubmitted={handleSubmitted} /> },
   ];
   return (
     <>

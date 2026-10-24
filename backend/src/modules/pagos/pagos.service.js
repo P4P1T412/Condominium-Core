@@ -22,6 +22,68 @@ function mapPayment(row) {
   };
 }
 
+/**
+ * Resuelve de forma robusta la persona asociada a la sesión.
+ *
+ * El token puede venir de versiones anteriores con `personaId` ausente o con
+ * un identificador desalineado. La tabla USUARIO es la fuente de verdad para
+ * relacionar id_usuario -> id_persona, por lo que se prioriza cuando existe.
+ * Si no, se valida el id recibido como PERSONA o, como último recurso, como
+ * id_usuario. Devuelve siempre el id_persona correcto para filtrar el padrón.
+ *
+ * @param {number|object} identity - id_persona o { personaId, userId }.
+ * @returns {Promise<number>} id_persona canónico.
+ */
+async function resolvePersonaId(identity) {
+  const data = identity && typeof identity === "object"
+    ? identity
+    : { personaId: identity };
+
+  const userId = data.userId !== undefined && data.userId !== null && data.userId !== ""
+    ? Number(data.userId)
+    : null;
+  const personaId = data.personaId !== undefined && data.personaId !== null && data.personaId !== ""
+    ? Number(data.personaId)
+    : null;
+
+  if (userId !== null && Number.isFinite(userId)) {
+    const byUser = await executeQuery(`
+      SELECT id_persona FROM USUARIO WHERE id_usuario = :userId
+    `, { userId });
+
+    if (byUser.rows.length > 0 && byUser.rows[0].ID_PERSONA != null) {
+      return byUser.rows[0].ID_PERSONA;
+    }
+  }
+
+  if (personaId !== null && Number.isFinite(personaId)) {
+    const byPersona = await executeQuery(`
+      SELECT id_persona FROM PERSONA WHERE id_persona = :personaId
+    `, { personaId });
+
+    if (byPersona.rows.length > 0) {
+      return byPersona.rows[0].ID_PERSONA;
+    }
+
+    // Compatibilidad: algunas sesiones antiguas guardaron id_usuario en el
+    // campo personaId. Si ese id existe como usuario, se usa su persona real.
+    if (personaId !== userId) {
+      const fallbackUser = await executeQuery(`
+        SELECT id_persona FROM USUARIO WHERE id_usuario = :personaId
+      `, { personaId });
+
+      if (fallbackUser.rows.length > 0 && fallbackUser.rows[0].ID_PERSONA != null) {
+        return fallbackUser.rows[0].ID_PERSONA;
+      }
+    }
+  }
+
+  const error = new Error("No se pudo identificar la persona asociada a su sesión.");
+  error.statusCode = 401;
+  error.code = "PERSONA_NOT_FOUND";
+  throw error;
+}
+
 async function getPendingPayments() {
   const result = await executeQuery(`
     SELECT p.id_pago, p.id_cuota, c.numero_casa, c.bloque,
@@ -69,25 +131,31 @@ const ACCOUNT_QUERY = `
     UNION
     SELECT id_casa FROM RESIDENTE WHERE id_persona = :personaId AND estado = 'ACTIVO'
   )
+    AND cu.id_multa IS NULL
   UNION ALL
-  SELECT c.id_casa, c.numero_casa, c.bloque, CAST(NULL AS NUMBER) AS id_registro,
-         m.id_multa, 'MULTA' AS tipo, CAST(NULL AS NUMBER) AS id_pago,
-         CAST(NULL AS VARCHAR2(15)) AS estado_pago,
-         CAST(NULL AS VARCHAR2(250)) AS observacion_pago,
-         CAST(NULL AS VARCHAR2(500)) AS comprobante_pago,
-         CAST(NULL AS NUMBER) AS pago_monto,
-         CAST(NULL AS DATE) AS pago_fecha,
-         CAST(NULL AS VARCHAR2(20)) AS pago_metodo,
-         CAST(NULL AS VARCHAR2(80)) AS pago_referencia,
+  SELECT c.id_casa, c.numero_casa, c.bloque, cu.id_cuota AS id_registro,
+         m.id_multa, 'MULTA' AS tipo,
+         (SELECT MAX(p.id_pago) FROM PAGO p WHERE p.id_cuota = cu.id_cuota AND p.estado = 'VALIDO') AS id_pago,
+         (SELECT estado FROM (SELECT p.estado FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS estado_pago,
+         (SELECT observacion_rechazo FROM (SELECT p.observacion_rechazo FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS observacion_pago,
+         (SELECT comprobante_url FROM (SELECT p.comprobante_url FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS comprobante_pago,
+         (SELECT monto_pagado FROM (SELECT p.monto_pagado FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS pago_monto,
+         (SELECT fecha_pago FROM (SELECT p.fecha_pago FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS pago_fecha,
+         (SELECT metodo_pago FROM (SELECT p.metodo_pago FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS pago_metodo,
+         (SELECT referencia FROM (SELECT p.referencia FROM PAGO p WHERE p.id_cuota = cu.id_cuota ORDER BY p.id_pago DESC) WHERE ROWNUM = 1) AS pago_referencia,
          TO_CHAR(m.fecha_multa, 'YYYY-MM') AS periodo,
          m.motivo AS concepto, m.monto,
-         NVL((SELECT SUM(cu.monto_total - NVL((SELECT SUM(p.monto_pagado)
-              FROM PAGO p WHERE p.id_cuota = cu.id_cuota AND p.estado = 'VALIDO'), 0))
-              FROM CUOTA cu WHERE cu.id_multa = m.id_multa), 0) AS pagado,
+         NVL((SELECT SUM(p.monto_pagado) FROM PAGO p
+              WHERE p.id_cuota = cu.id_cuota AND p.estado = 'VALIDO'), 0) AS pagado,
          m.fecha_multa, m.fecha_vencimiento,
-         m.estado
+         CASE
+           WHEN m.estado IN ('PAGADA', 'ANULADA') THEN m.estado
+           WHEN m.fecha_vencimiento < TRUNC(SYSDATE) THEN 'VENCIDA'
+           ELSE 'PENDIENTE'
+         END AS estado
   FROM MULTA m
   JOIN CASA c ON c.id_casa = m.id_casa
+  LEFT JOIN CUOTA cu ON cu.id_multa = m.id_multa
   WHERE c.id_casa IN (
     SELECT id_casa FROM CASA WHERE id_propietario = :personaId
     UNION
@@ -121,7 +189,7 @@ function mapAccount(row) {
     fechaEmision: row.FECHA_EMISION,
     fechaVencimiento: row.FECHA_VENCIMIENTO,
     estado: row.ESTADO,
-    aplicable: row.TIPO === "CUOTA" && !["PAGADA", "ANULADA"].includes(row.ESTADO)
+    aplicable: (row.ID_REGISTRO != null || row.ID_MULTA != null) && !["PAGADA", "ANULADA"].includes(row.ESTADO)
       && row.ESTADO_PAGO !== "PENDIENTE",
   };
 }
@@ -160,8 +228,26 @@ async function ensureMonthlyFees(personaId) {
       WHERE ROWNUM = 1
     `, { idCasa: house.ID_CASA });
 
-    if (!templateResult.rows.length) continue;
-    const template = templateResult.rows[0];
+    let template = templateResult.rows[0];
+
+    // Una vivienda recién vinculada puede no tener todavía una cuota propia.
+    // En ese caso se toma como referencia la última cuota periódica del
+    // condominio para que su estado de cuenta no quede vacío.
+    if (!template) {
+      const fallbackTemplateResult = await executeQuery(`
+        SELECT concepto, monto_total, creado_por
+        FROM (
+          SELECT concepto, monto_total, creado_por
+          FROM CUOTA
+          WHERE id_multa IS NULL
+          ORDER BY periodo DESC, id_cuota DESC
+        )
+        WHERE ROWNUM = 1
+      `);
+      template = fallbackTemplateResult.rows[0];
+    }
+
+    if (!template) continue;
 
     for (let month = 1; month <= currentMonth; month += 1) {
       const periodo = `${currentYear}-${String(month).padStart(2, "0")}`;
@@ -194,15 +280,37 @@ async function ensureMonthlyFees(personaId) {
   }
 }
 
-async function getAccountStatement(personaId) {
+async function getAccountStatement(identity) {
+  const personaId = await resolvePersonaId(identity);
   await ensureMonthlyFees(personaId);
   const result = await executeQuery(`${ACCOUNT_QUERY} ORDER BY fecha_vencimiento DESC`, {
-    personaId: Number(personaId),
+    personaId,
   });
   return result.rows.map(mapAccount);
 }
 
-async function getGeneralStatement(periodo) {
+async function getGeneralStatement({ periodo, desde, hasta, idCasa } = {}) {
+  const dateConditions = [];
+  const binds = {};
+
+  if (desde) {
+    dateConditions.push("cu.fecha_vencimiento >= TO_DATE(:desde, 'YYYY-MM-DD')");
+    binds.desde = desde;
+  }
+  if (hasta) {
+    dateConditions.push("cu.fecha_vencimiento < TO_DATE(:hasta, 'YYYY-MM-DD') + 1");
+    binds.hasta = hasta;
+  }
+
+  const feeFilter = dateConditions.length
+    ? dateConditions.join(" AND ")
+    : "cu.periodo = NVL(:periodo, TO_CHAR(SYSDATE, 'YYYY-MM'))";
+  if (!dateConditions.length) {
+    binds.periodo = periodo || null;
+  }
+  const houseFilter = idCasa ? "AND c.id_casa = :idCasa" : "";
+  if (idCasa) binds.idCasa = Number(idCasa);
+
   const result = await executeQuery(`
     SELECT c.id_casa, c.numero_casa, c.bloque,
            per.nombres || ' ' || per.apellidos AS propietario,
@@ -219,10 +327,10 @@ async function getGeneralStatement(periodo) {
     FROM CASA c
     JOIN PERSONA per ON per.id_persona = c.id_propietario
     LEFT JOIN CUOTA cu ON cu.id_casa = c.id_casa
-      AND cu.periodo = NVL(:periodo, TO_CHAR(SYSDATE, 'YYYY-MM'))
-    WHERE c.estado <> 'INACTIVA'
+      AND ${feeFilter}
+    WHERE c.estado <> 'INACTIVA' ${houseFilter}
     ORDER BY c.bloque, c.numero_casa
-  `, { periodo: periodo || null });
+  `, binds);
 
   return result.rows.map((row) => ({
     idCasa: row.ID_CASA,
@@ -258,28 +366,148 @@ async function getDelinquentHouses() {
   }));
 }
 
+async function getActiveFines({ desde, hasta, idCasa } = {}) {
+  const conditions = ["m.estado IN ('PENDIENTE', 'VENCIDA')"];
+  const binds = {};
+
+  if (desde) {
+    conditions.push("m.fecha_multa >= TO_DATE(:desde, 'YYYY-MM-DD')");
+    binds.desde = desde;
+  }
+  if (hasta) {
+    conditions.push("m.fecha_multa < TO_DATE(:hasta, 'YYYY-MM-DD') + 1");
+    binds.hasta = hasta;
+  }
+  if (idCasa) {
+    conditions.push("m.id_casa = :idCasa");
+    binds.idCasa = Number(idCasa);
+  }
+
+  const result = await executeQuery(`
+    SELECT m.id_multa, m.id_casa, c.numero_casa, c.bloque,
+           per.nombres || ' ' || per.apellidos AS propietario,
+           m.motivo, m.monto, m.fecha_multa, m.fecha_vencimiento,
+           CASE
+             WHEN m.estado IN ('PAGADA', 'ANULADA') THEN m.estado
+             WHEN m.fecha_vencimiento < TRUNC(SYSDATE) THEN 'VENCIDA'
+             ELSE 'PENDIENTE'
+           END AS estado
+    FROM MULTA m
+    JOIN CASA c ON c.id_casa = m.id_casa
+    JOIN PERSONA per ON per.id_persona = c.id_propietario
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY m.fecha_multa DESC, m.id_multa DESC
+  `, binds);
+
+  return result.rows.map((row) => ({
+    idMulta: row.ID_MULTA,
+    idCasa: row.ID_CASA,
+    casa: row.NUMERO_CASA,
+    bloque: row.BLOQUE,
+    propietario: row.PROPIETARIO,
+    motivo: row.MOTIVO,
+    monto: Number(row.MONTO || 0),
+    fechaMulta: row.FECHA_MULTA,
+    fechaVencimiento: row.FECHA_VENCIMIENTO,
+    estado: row.ESTADO,
+  }));
+}
+
 async function createFine({ idCasa, motivo, monto, fechaVencimiento }, userId) {
   const result = await executeQuery(`
     INSERT INTO MULTA (
       id_casa, motivo, monto, fecha_multa, fecha_vencimiento,
       estado, creado_por
     ) VALUES (
-      :idCasa, :motivo, :monto, SYSDATE, :fechaVencimiento,
+      :idCasa, :motivo, :monto, TRUNC(SYSDATE), TO_DATE(:fechaVencimiento, 'YYYY-MM-DD'),
       'PENDIENTE', :userId
     ) RETURNING id_multa INTO :idMultaOut
   `, {
     idCasa: Number(idCasa),
     motivo: motivo.trim(),
     monto: Number(monto),
-    fechaVencimiento: new Date(fechaVencimiento),
+    fechaVencimiento,
     userId: Number(userId),
     idMultaOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+  }, { autoCommit: true });
+
+  await executeQuery(`
+    INSERT INTO CUOTA (
+      id_casa, id_multa, concepto, periodo, monto_total,
+      fecha_emision, fecha_vencimiento, estado, creado_por
+    ) VALUES (
+      :idCasa, :idMulta, :concepto, TO_CHAR(TRUNC(SYSDATE), 'YYYY-MM'),
+      :monto, TRUNC(SYSDATE), TO_DATE(:fechaVencimiento, 'YYYY-MM-DD'),
+      'PENDIENTE', :userId
+    )
+  `, {
+    idCasa: Number(idCasa),
+    idMulta: result.outBinds.idMultaOut[0],
+    concepto: motivo.trim(),
+    monto: Number(monto),
+    fechaVencimiento,
+    userId: Number(userId),
   }, { autoCommit: true });
 
   return { idMulta: result.outBinds.idMultaOut[0] };
 }
 
-async function submitPayment({ idCuota, monto, fechaPago, metodo, referencia, comprobanteUrl }, personaId) {
+async function submitPayment({ idCuota, idMulta, monto, fechaPago, metodo, referencia, comprobanteUrl }, identity) {
+  const personaId = await resolvePersonaId(identity);
+  let paymentFeeId = Number(idCuota) || null;
+
+  if (!paymentFeeId && idMulta) {
+    const fineResult = await executeQuery(`
+      SELECT m.id_multa, m.id_casa, m.motivo, m.monto, m.fecha_multa, m.fecha_vencimiento
+      FROM MULTA m
+      WHERE m.id_multa = :idMulta
+        AND (EXISTS (
+          SELECT 1 FROM CASA c
+          WHERE c.id_casa = m.id_casa AND c.id_propietario = :personaId
+        ) OR EXISTS (
+          SELECT 1 FROM RESIDENTE r
+          WHERE r.id_casa = m.id_casa AND r.id_persona = :personaId AND r.estado = 'ACTIVO'
+        ))
+    `, { idMulta: Number(idMulta), personaId: Number(personaId) });
+
+    if (!fineResult.rows.length) {
+      const error = new Error("La mora no pertenece a una casa asociada a su cuenta.");
+      error.statusCode = 403;
+      error.code = "PAYMENT_NOT_ALLOWED";
+      throw error;
+    }
+
+    const existingFee = await executeQuery(
+      "SELECT id_cuota FROM CUOTA WHERE id_multa = :idMulta",
+      { idMulta: Number(idMulta) },
+    );
+    if (existingFee.rows.length) {
+      paymentFeeId = existingFee.rows[0].ID_CUOTA;
+    } else {
+      const fine = fineResult.rows[0];
+      const createdFee = await executeQuery(`
+        INSERT INTO CUOTA (
+          id_casa, id_multa, concepto, periodo, monto_total,
+          fecha_emision, fecha_vencimiento, estado, creado_por
+        ) VALUES (
+          :idCasa, :idMulta, :concepto, TO_CHAR(:fechaMulta, 'YYYY-MM'),
+          :monto, :fechaMulta, :fechaVencimiento, 'PENDIENTE',
+          (SELECT id_usuario FROM USUARIO WHERE id_persona = :personaId)
+        ) RETURNING id_cuota INTO :idCuotaOut
+      `, {
+        idCasa: fine.ID_CASA,
+        idMulta: Number(idMulta),
+        concepto: fine.MOTIVO,
+        monto: fine.MONTO,
+        fechaMulta: fine.FECHA_MULTA,
+        fechaVencimiento: fine.FECHA_VENCIMIENTO,
+        personaId: Number(personaId),
+        idCuotaOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+      }, { autoCommit: true });
+      paymentFeeId = createdFee.outBinds.idCuotaOut[0];
+    }
+  }
+
   const ownership = await executeQuery(`
     SELECT cu.id_cuota
     FROM CUOTA cu
@@ -289,7 +517,7 @@ async function submitPayment({ idCuota, monto, fechaPago, metodo, referencia, co
         SELECT 1 FROM RESIDENTE r
         WHERE r.id_casa = c.id_casa AND r.id_persona = :personaId AND r.estado = 'ACTIVO'
       ))
-  `, { idCuota: Number(idCuota), personaId: Number(personaId) });
+  `, { idCuota: paymentFeeId, personaId: Number(personaId) });
 
   if (ownership.rows.length === 0) {
     const error = new Error("La cuota no pertenece a una casa asociada a su cuenta.");
@@ -308,7 +536,7 @@ async function submitPayment({ idCuota, monto, fechaPago, metodo, referencia, co
       (SELECT id_usuario FROM USUARIO WHERE id_persona = :personaId)
     ) RETURNING id_pago INTO :idPagoOut
   `, {
-    idCuota: Number(idCuota),
+    idCuota: paymentFeeId,
     monto: Number(monto),
     fechaPago: new Date(fechaPago),
     metodo,
@@ -422,6 +650,7 @@ module.exports = {
   getAccountStatement,
   getGeneralStatement,
   getDelinquentHouses,
+  getActiveFines,
   createFine,
   submitPayment,
   updatePaymentStatus,
