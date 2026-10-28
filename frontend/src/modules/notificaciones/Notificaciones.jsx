@@ -1,103 +1,96 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAuth } from "../../context/AuthContext";
+import { api } from "../../services/api";
 
 export default function Notificaciones() {
-  const [activeTab, setActiveTab] = useState("quejas");
+  const { user } = useAuth(); // { id, nombre, rol, casaId }
+
+  const [activeTab, setActiveTab] = useState("avisos");
   const [filterCategory, setFilterCategory] = useState("Todas");
-  
-  // Estado para controlar la visibilidad del modal y los datos del formulario
   const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [mensajeAlert, setMensajeAlert] = useState(null);
+
+  // Listas con estado persistido desde backend
+  const [comunicados, setComunicados] = useState([]);
+  const [quejas, setQuejas] = useState([]);
+
+  // Formulario adaptado para Comunicados Multicanal / Quejas
   const [formData, setFormData] = useState({
     titulo: "",
-    categoria: "General",
     contenido: "",
+    categoria: "General",
+    tipoDestino: "GLOBAL", // 'GLOBAL', 'CASA', 'INDIVIDUAL'
+    idCasaDestino: "",
+    idUsuarioDestino: "",
+    canalEnvio: "TODOS",  // 'APP', 'EMAIL', 'WHATSAPP', 'AMBOS', 'TODOS'
   });
 
-  // Lista de Comunicados (Avisos)
-  const [comunicados, setComunicados] = useState([
-    {
-      id: 1,
-      titulo: "[IMPORTANTE] Mantenimiento Programado de Piscinas",
-      contenido: "Estimados vecinos, la piscina principal estará cerrada este jueves de 8:00 AM a 2:00 PM por limpieza profunda.",
-      fecha: "2026-10-06",
-      categoria: "Mantenimiento",
-      badgeColor: "#EF4444",
-    },
-    {
-      id: 2,
-      titulo: "[IMPORTANTE] Asamblea General Ordinaria de Condóminos",
-      contenido: "Se les convoca a la reunión anual en el Salón Social el próximo 15 de Octubre a las 18:00 hrs.",
-      fecha: "2026-10-01",
-      categoria: "Administración",
-      badgeColor: "#EF4444",
-    },
-    {
-      id: 3,
-      titulo: "Recordatorio sobre horarios de recolección de basura",
-      contenido: "Favor colocar sus contenedores antes de las 7:00 AM los días martes, jueves y sábados.",
-      fecha: "2026-09-28",
-      categoria: "General",
-      badgeColor: "#3B82F6",
-    },
-  ]);
+  useEffect(() => {
+    cargarDatos();
+  }, [activeTab]);
 
-  // Lista de Quejas y Sugerencias
-  const [quejas, setQuejas] = useState([
-    {
-      id: 101,
-      casa: "Casa A-101",
-      asunto: "Ruido excesivo durante la noche",
-      descripcion: "En la casa B-204 hubo música a alto volumen pasada la medianoche el sábado.",
-      fecha: "2026-10-18",
-      estado: "PENDIENTE",
-      badgeColor: "#FEF3C7",
-      textColor: "#92400E",
-    },
-    {
-      id: 102,
-      casa: "Casa A-102",
-      asunto: "Falla en iluminación del parque central",
-      descripcion: "Dos luminarias frente al área de juegos infantiles se encuentran apagadas.",
-      fecha: "2026-10-15",
-      estado: "EN REVISIÓN",
-      badgeColor: "#E0F2FE",
-      textColor: "#0369A1",
-    },
-  ]);
+  const cargarDatos = async () => {
+    try {
+      setLoading(true);
+      if (activeTab === "avisos") {
+        const res = await api.get("/notificaciones");
+        setComunicados(res.data.data);
+      } else {
+        const res = await api.get("/quejas");
+        setQuejas(res.data.data);
+      }
+    } catch (err) {
+      console.error("Error al cargar datos:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Función para procesar el envío del formulario
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.titulo || !formData.contenido) return;
 
-    const fechaHoy = new Date().toISOString().split("T")[0];
+    try {
+      if (activeTab === "avisos") {
+        const payload = {
+          titulo: formData.titulo,
+          contenido: formData.contenido,
+          idCasaDestino: formData.tipoDestino === "CASA" ? Number(formData.idCasaDestino) : null,
+          idUsuarioDestino: formData.tipoDestino === "INDIVIDUAL" ? Number(formData.idUsuarioDestino) : null,
+          canalEnvio: formData.canalEnvio,
+        };
 
-    if (activeTab === "avisos") {
-      const nuevoComunicado = {
-        id: Date.now(),
-        titulo: formData.titulo,
-        contenido: formData.contenido,
-        fecha: fechaHoy,
-        categoria: formData.categoria,
-        badgeColor: formData.categoria === "Mantenimiento" ? "#EF4444" : "#3B82F6",
-      };
-      setComunicados([nuevoComunicado, ...comunicados]);
-    } else {
-      const nuevaQueja = {
-        id: Date.now(),
-        casa: "Mi Casa",
-        asunto: formData.titulo,
-        descripcion: formData.contenido,
-        fecha: fechaHoy,
-        estado: "PENDIENTE",
-        badgeColor: "#FEF3C7",
-        textColor: "#92400E",
-      };
-      setQuejas([nuevaQueja, ...quejas]);
+        const res = await api.post("/notificaciones", payload);
+        setMensajeAlert({ tipo: "exito", texto: res.data.message });
+      } else {
+        const payload = {
+          asunto: formData.titulo,
+          descripcion: formData.contenido,
+          idCasa: user.casaId,
+        };
+
+        await api.post("/quejas", payload);
+        setMensajeAlert({ tipo: "exito", texto: "Queja o sugerencia registrada correctamente." });
+      }
+
+      setShowModal(false);
+      setFormData({
+        titulo: "",
+        contenido: "",
+        categoria: "General",
+        tipoDestino: "GLOBAL",
+        idCasaDestino: "",
+        idUsuarioDestino: "",
+        canalEnvio: "TODOS",
+      });
+      cargarDatos();
+    } catch (err) {
+      setMensajeAlert({
+        tipo: "error",
+        texto: err.response?.data?.message || "Error al procesar la solicitud.",
+      });
     }
-
-    // Limpiar y cerrar modal
-    setFormData({ titulo: "", categoria: "General", contenido: "" });
-    setShowModal(false);
   };
 
   return (
@@ -111,12 +104,32 @@ export default function Notificaciones() {
           </p>
         </div>
         <div style={styles.headerActions}>
-          <button style={styles.btnSecondary}>Actualizar lista</button>
-          <button style={styles.btnPrimary} onClick={() => setShowModal(true)}>
-            {activeTab === "avisos" ? "+ Publicar Comunicado" : "+ Nueva Queja / Sugerencia"}
+          <button style={styles.btnSecondary} onClick={cargarDatos}>
+            Actualizar lista
           </button>
+          {/* Si es Residente puede crear Quejas, si es Admin puede publicar Comunicados */}
+          {(activeTab === "quejas" || user.rol === "ADMIN") && (
+            <button style={styles.btnPrimary} onClick={() => setShowModal(true)}>
+              {activeTab === "avisos" ? "+ Publicar Comunicado" : "+ Nueva Queja / Sugerencia"}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Alerta de Respuesta */}
+      {mensajeAlert && (
+        <div
+          style={{
+            padding: "12px",
+            marginBottom: "16px",
+            borderRadius: "8px",
+            backgroundColor: mensajeAlert.tipo === "exito" ? "#DCFCE7" : "#FEE2E2",
+            color: mensajeAlert.tipo === "exito" ? "#166534" : "#991B1B",
+          }}
+        >
+          {mensajeAlert.texto}
+        </div>
+      )}
 
       {/* Navegación por Pestañas */}
       <div style={styles.tabsContainer}>
@@ -151,39 +164,71 @@ export default function Notificaciones() {
             </select>
           </div>
 
-          <div style={styles.cardsGrid}>
-            {comunicados
-              .filter((c) => filterCategory === "Todas" || c.categoria === filterCategory)
-              .map((item) => (
-                <div key={item.id} style={{ ...styles.card, borderLeft: `4px solid ${item.badgeColor}` }}>
+          {loading ? (
+            <p>Cargando avisos...</p>
+          ) : (
+            <div style={styles.cardsGrid}>
+              {comunicados.map((item) => (
+                <div
+                  key={item.ID_COMUNICADO}
+                  style={{
+                    ...styles.card,
+                    borderLeft: `4px solid ${
+                      item.CANAL_ENVIO === "WHATSAPP"
+                        ? "#22C55E"
+                        : item.CANAL_ENVIO === "EMAIL"
+                        ? "#3B82F6"
+                        : "#EF4444"
+                    }`,
+                  }}
+                >
                   <div style={styles.cardHeader}>
-                    <h3 style={styles.cardTitle}>{item.titulo}</h3>
-                    <span style={styles.cardDate}>{item.fecha}</span>
+                    <h3 style={styles.cardTitle}>{item.TITULO}</h3>
+                    <span style={styles.cardDate}>
+                      {new Date(item.FECHA_PUBLICACION).toLocaleDateString()}
+                    </span>
                   </div>
-                  <p style={styles.cardContent}>{item.contenido}</p>
-                  <div style={styles.cardFooter}>
-                    <span style={styles.categoryBadge}>Categoría: {item.categoria}</span>
+                  <p style={styles.cardContent}>{item.CONTENIDO}</p>
+                  <div style={styles.cardFooterSpace}>
+                    <span style={styles.categoryBadge}>Canal: {item.CANAL_ENVIO}</span>
+                    <span style={styles.destinatarioText}>
+                      {item.ID_CASA_DESTINO
+                        ? `Casa #${item.NUMERO_CASA || item.ID_CASA_DESTINO}`
+                        : item.ID_USUARIO_DESTINO
+                        ? `Aviso Individual`
+                        : "Global"}
+                    </span>
                   </div>
                 </div>
               ))}
-          </div>
+            </div>
+          )}
         </>
       ) : (
+        /* PESTAÑA QUEJAS Y SUGERENCIAS */
         <div style={styles.cardsGrid}>
           {quejas.map((item) => (
-            <div key={item.id} style={styles.card}>
+            <div key={item.ID_QUEJA} style={styles.card}>
               <div style={styles.cardHeader}>
                 <div>
-                  <h3 style={styles.cardTitle}>{item.asunto}</h3>
-                  <span style={styles.cardSub}>Reportado por {item.casa}</span>
+                  <h3 style={styles.cardTitle}>{item.ASUNTO}</h3>
+                  <span style={styles.cardSub}>Reportado por Casa #{item.NUMERO_CASA || item.ID_CASA}</span>
                 </div>
-                <span style={{ ...styles.statusBadge, backgroundColor: item.badgeColor, color: item.textColor }}>
-                  {item.estado}
+                <span
+                  style={{
+                    ...styles.statusBadge,
+                    backgroundColor: item.ESTADO === "RESUELTA" ? "#DCFCE7" : "#FEF3C7",
+                    color: item.ESTADO === "RESUELTA" ? "#166534" : "#92400E",
+                  }}
+                >
+                  {item.ESTADO}
                 </span>
               </div>
-              <p style={styles.cardContent}>{item.descripcion}</p>
+              <p style={styles.cardContent}>{item.DESCRIPCION}</p>
               <div style={styles.cardFooterSpace}>
-                <span style={styles.cardDate}>Fecha: {item.fecha}</span>
+                <span style={styles.cardDate}>
+                  Fecha: {new Date(item.FECHA_CREACION).toLocaleDateString()}
+                </span>
                 <button style={styles.btnActionSmall}>Ver Respuesta</button>
               </div>
             </div>
@@ -191,7 +236,7 @@ export default function Notificaciones() {
         </div>
       )}
 
-      {/* MODAL PARA CREAR COMUNICADO O QUEJA */}
+      {/* MODAL ADAPTATIVO (PUBLICAR COMUNICADO O REGISTRAR QUEJA) */}
       {showModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
@@ -206,26 +251,72 @@ export default function Notificaciones() {
                 <input
                   type="text"
                   required
-                  placeholder={activeTab === "avisos" ? "Ej: Mantenimiento de bombas" : "Ej: Ruido en área común"}
+                  placeholder={activeTab === "avisos" ? "Ej: Mantenimiento de pozos" : "Ej: Ruido en área común"}
                   value={formData.titulo}
                   onChange={(e) => setFormData({ ...formData, titulo: e.target.value })}
                   style={styles.input}
                 />
               </div>
 
+              {/* OPCIONES EXCLUSIVAS PARA COMUNICADOS (ROL ADMIN) */}
               {activeTab === "avisos" && (
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Categoría</label>
-                  <select
-                    value={formData.categoria}
-                    onChange={(e) => setFormData({ ...formData, categoria: e.target.value })}
-                    style={styles.input}
-                  >
-                    <option value="General">General</option>
-                    <option value="Mantenimiento">Mantenimiento</option>
-                    <option value="Administración">Administración</option>
-                  </select>
-                </div>
+                <>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Alcance del Destinatario</label>
+                    <select
+                      value={formData.tipoDestino}
+                      onChange={(e) => setFormData({ ...formData, tipoDestino: e.target.value })}
+                      style={styles.input}
+                    >
+                      <option value="GLOBAL">Todos los Residentes (Global)</option>
+                      <option value="CASA">Por Casa Específica</option>
+                      <option value="INDIVIDUAL">A un Usuario Directo (ID)</option>
+                    </select>
+                  </div>
+
+                  {formData.tipoDestino === "CASA" && (
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>ID de la Casa Destino</label>
+                      <input
+                        type="number"
+                        required
+                        placeholder="Ej: 1"
+                        value={formData.idCasaDestino}
+                        onChange={(e) => setFormData({ ...formData, idCasaDestino: e.target.value })}
+                        style={styles.input}
+                      />
+                    </div>
+                  )}
+
+                  {formData.tipoDestino === "INDIVIDUAL" && (
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>ID del Usuario Destino</label>
+                      <input
+                        type="number"
+                        required
+                        placeholder="Ej: 5"
+                        value={formData.idUsuarioDestino}
+                        onChange={(e) => setFormData({ ...formData, idUsuarioDestino: e.target.value })}
+                        style={styles.input}
+                      />
+                    </div>
+                  )}
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Canal de Despacho</label>
+                    <select
+                      value={formData.canalEnvio}
+                      onChange={(e) => setFormData({ ...formData, canalEnvio: e.target.value })}
+                      style={styles.input}
+                    >
+                      <option value="APP">Solo App</option>
+                      <option value="EMAIL">Correo Electrónico</option>
+                      <option value="WHATSAPP">WhatsApp</option>
+                      <option value="AMBOS">Email + WhatsApp</option>
+                      <option value="TODOS">Todos los Canales (App + Email + WhatsApp)</option>
+                    </select>
+                  </div>
+                </>
               )}
 
               <div style={styles.formGroup}>
@@ -279,13 +370,11 @@ const styles = {
   cardSub: { fontSize: "12px", color: "#64748B" },
   cardDate: { fontSize: "12px", color: "#94A3B8" },
   cardContent: { fontSize: "14px", color: "#475569", lineHeight: "1.5", margin: "0 0 14px 0" },
-  cardFooter: { display: "flex", alignItems: "center" },
   cardFooterSpace: { display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #F1F5F9", paddingTop: "12px" },
   categoryBadge: { fontSize: "12px", fontWeight: "500", backgroundColor: "#F1F5F9", color: "#475569", padding: "4px 10px", borderRadius: "6px" },
+  destinatarioText: { fontSize: "12px", color: "#64748B", fontWeight: "500" },
   statusBadge: { fontSize: "11px", fontWeight: "700", padding: "4px 10px", borderRadius: "12px", textTransform: "uppercase" },
   btnActionSmall: { backgroundColor: "#F8FAFC", color: "#1B4B82", border: "1px solid #CBD5E1", padding: "6px 12px", borderRadius: "6px", fontWeight: "600", fontSize: "12px", cursor: "pointer" },
-  
-  // Estilos del Modal
   modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(15, 23, 42, 0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
   modalContent: { backgroundColor: "#FFFFFF", padding: "28px", borderRadius: "12px", width: "100%", maxWidth: "500px", boxShadow: "0 10px 25px rgba(0,0,0,0.1)" },
   modalTitle: { fontSize: "18px", fontWeight: "700", color: "#0F172A", margin: "0 0 20px 0" },

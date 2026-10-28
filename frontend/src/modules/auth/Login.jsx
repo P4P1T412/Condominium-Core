@@ -29,13 +29,17 @@ export default function Login() {
       const { data } = response;
 
       if (data && data.success) {
-        // 2. Guardar en AuthContext y normalizar rol
-        login(data.data.user);
+        // CORRECCIÓN CLAVE: Extraer tanto el usuario como el token de la respuesta
+        const userObj = data.data?.user || data.user;
+        const tokenStr = data.token || data.data?.token || data.accessToken;
+
+        // 2. Guardar en AuthContext Y en localStorage (Usuario + Token)
+        login(userObj, tokenStr);
 
         // 3. Redirección inteligente según el rol obtenido de Oracle
-        const userRole = (data.data.user.role || data.data.user.rol || "").toLowerCase();
+        const userRole = (userObj?.role || userObj?.rol || "").toLowerCase();
 
-        if (userRole === "administrador") {
+        if (userRole === "administrador" || userRole === "admin") {
           navigate("/casas");
         } else if (userRole === "garita") {
           navigate("/garita");
@@ -90,7 +94,7 @@ export default function Login() {
             <div style={styles.passwordContainer}>
               <input
                 id="password"
-                type={showPassword ? "text" : "password"} // Cambia el tipo según el estado
+                type={showPassword ? "text" : "password"}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -98,13 +102,12 @@ export default function Login() {
                 style={styles.passwordInput}
                 disabled={loading}
               />
-              {/* Botón para alternar la visibilidad */}
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={styles.toggleButton}
                 disabled={loading}
-                tabIndex="-1" // Evita que se enfoque con Tab para no interrumpir el flujo
+                tabIndex="-1"
               >
                 {showPassword ? <EyeOff size={18} color="#6B7280" /> : <Eye size={18} color="#6B7280" />}
               </button>
@@ -162,7 +165,7 @@ const styles = {
     padding: "36px 32px",
     boxShadow: "0 4px 16px rgba(0, 0, 0, 0.08)",
     border: "1px solid var(--color-border, #E5E7EB)",
-    boxSizing: "border-box", // Prevenir desbordes
+    boxSizing: "border-box",
   },
   header: {
     marginBottom: "24px",
@@ -214,8 +217,6 @@ const styles = {
     boxSizing: "border-box",
     width: "100%",
   },
-  
-  // Nuevos estilos para contener el input de contraseña y el botón
   passwordContainer: {
     position: "relative",
     display: "flex",
@@ -224,7 +225,7 @@ const styles = {
   },
   passwordInput: {
     width: "100%",
-    padding: "10px 40px 10px 14px", // Dejar espacio a la derecha para el botón
+    padding: "10px 40px 10px 14px",
     borderRadius: "8px",
     border: "1px solid var(--color-border, #E5E7EB)",
     fontSize: "14px",
@@ -253,7 +254,6 @@ const styles = {
     fontWeight: "600",
     textDecoration: "none",
   },
-
   button: {
     padding: "12px",
     borderRadius: "8px",

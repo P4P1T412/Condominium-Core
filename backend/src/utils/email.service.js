@@ -1,13 +1,13 @@
 /**
  * =============================================================================
- * SERVICIO DE CORREO ELECTRÓNICO (Nodemailer con Gmail)
+ * SERVICIO DE CORREO ELECTRÓNICO (Nodemailer con Gmail + Simulación)
  * =============================================================================
  */
 
 const nodemailer = require("nodemailer");
 
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+const EMAIL_USER = process.env.EMAIL_USER || process.env.SMTP_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS || process.env.SMTP_PASS;
 const EMAIL_FROM =
   process.env.EMAIL_FROM || `"Sistema Condominio" <${EMAIL_USER}>`;
 
@@ -22,8 +22,6 @@ const CONFIGURACION_INVALIDA = !EMAIL_USER || !EMAIL_PASS;
 
 /**
  * Transporter SMTP utilizando el servicio integrado de Gmail.
- * El atajo "service: 'gmail'" configura automáticamente el host,
- * el puerto y la seguridad TLS/SSL correcta para Google.
  */
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -34,11 +32,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /**
- * Construye la plantilla HTML del correo de verificación.
- *
- * @param {string} name Nombre del destinatario.
- * @param {string} code Código numérico de 6 dígitos.
- * @returns {string} Documento HTML listo para enviar.
+ * Plantilla HTML del correo de verificación.
  */
 function buildVerificationTemplate(name, code) {
   const nombreSeguro = String(name || "Usuario").replace(/[<>&]/g, "");
@@ -56,13 +50,11 @@ function buildVerificationTemplate(name, code) {
         <tr>
           <td align="center">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;background-color:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
-              <!-- Encabezado -->
               <tr>
                 <td style="background-color:#1B4B82;padding:28px 32px;text-align:center;">
                   <h1 style="margin:0;color:#FFFFFF;font-size:20px;font-weight:700;">Sistema de Gestión de Condominio</h1>
                 </td>
               </tr>
-              <!-- Cuerpo -->
               <tr>
                 <td style="padding:32px;">
                   <h2 style="margin:0 0 12px 0;color:#101828;font-size:18px;font-weight:700;">Hola ${nombreSeguro},</h2>
@@ -83,7 +75,6 @@ function buildVerificationTemplate(name, code) {
                   </p>
                 </td>
               </tr>
-              <!-- Pie -->
               <tr>
                 <td style="background-color:#F7F9FC;border-top:1px solid #E5E7EB;padding:18px 32px;text-align:center;">
                   <p style="margin:0;color:#98A2B3;font-size:11px;">
@@ -102,20 +93,13 @@ function buildVerificationTemplate(name, code) {
 
 /**
  * Envía el correo de verificación con el código de 6 dígitos.
- *
- * @param {string} email Correo destino del solicitante.
- * @param {string} name Nombre del solicitante para personalizar el mensaje.
- * @param {string} code Código numérico de 6 dígitos.
- * @returns {Promise<object>} Resultado del envío (info de Nodemailer).
- * @throws {Error} Si la configuración SMTP no está lista o falla el envío.
  */
 async function sendVerificationEmail(email, name, code) {
   if (CONFIGURACION_INVALIDA) {
-    const error = new Error(
-      "Configuración de correo de Gmail no establecida. Defina EMAIL_USER y EMAIL_PASS en el archivo .env."
-    );
-    error.code = "EMAIL_NOT_CONFIGURED";
-    throw error;
+    console.log("--- [SIMULACIÓN VERIFICACIÓN EMAIL] ---");
+    console.log(`Para: ${email}`);
+    console.log(`Código: ${code}`);
+    return { success: true, simulated: true };
   }
 
   const mailOptions = {
@@ -129,11 +113,7 @@ async function sendVerificationEmail(email, name, code) {
 }
 
 /**
- * Construye la plantilla HTML del correo de recuperación de contraseña.
- *
- * @param {string} name Nombre del destinatario.
- * @param {string} token Token de recuperación generado por el backend.
- * @returns {string} Documento HTML listo para enviar.
+ * Plantilla HTML del correo de recuperación de contraseña.
  */
 function buildPasswordResetTemplate(name, token) {
   const nombreSeguro = String(name || "Usuario").replace(/[<>&]/g, "");
@@ -152,13 +132,11 @@ function buildPasswordResetTemplate(name, token) {
         <tr>
           <td align="center">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;background-color:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
-              <!-- Encabezado -->
               <tr>
                 <td style="background-color:#1B4B82;padding:28px 32px;text-align:center;">
                   <h1 style="margin:0;color:#FFFFFF;font-size:20px;font-weight:700;">Sistema de Gestión de Condominio</h1>
                 </td>
               </tr>
-              <!-- Cuerpo -->
               <tr>
                 <td style="padding:32px;">
                   <h2 style="margin:0 0 12px 0;color:#101828;font-size:18px;font-weight:700;">Hola ${nombreSeguro},</h2>
@@ -185,7 +163,6 @@ function buildPasswordResetTemplate(name, token) {
                   </p>
                 </td>
               </tr>
-              <!-- Pie -->
               <tr>
                 <td style="background-color:#F7F9FC;border-top:1px solid #E5E7EB;padding:18px 32px;text-align:center;">
                   <p style="margin:0;color:#98A2B3;font-size:11px;">
@@ -203,21 +180,14 @@ function buildPasswordResetTemplate(name, token) {
 }
 
 /**
- * Envía el correo de recuperación de contraseña con el enlace de restablecimiento.
- *
- * @param {string} email Correo destino del solicitante.
- * @param {string} name Nombre del solicitante para personalizar el mensaje.
- * @param {string} token Token de recuperación generado por el backend.
- * @returns {Promise<object>} Resultado del envío (info de Nodemailer).
- * @throws {Error} Si la configuración SMTP no está lista o falla el envío.
+ * Envía el correo de recuperación de contraseña.
  */
 async function sendPasswordResetEmail(email, name, token) {
   if (CONFIGURACION_INVALIDA) {
-    const error = new Error(
-      "Configuración de correo de Gmail no establecida. Defina EMAIL_USER y EMAIL_PASS en el archivo .env."
-    );
-    error.code = "EMAIL_NOT_CONFIGURED";
-    throw error;
+    console.log("--- [SIMULACIÓN RECUPERACIÓN EMAIL] ---");
+    console.log(`Para: ${email}`);
+    console.log(`Token: ${token}`);
+    return { success: true, simulated: true };
   }
 
   const mailOptions = {
@@ -230,8 +200,33 @@ async function sendPasswordResetEmail(email, name, token) {
   return transporter.sendMail(mailOptions);
 }
 
+/**
+ * Función genérica de envío utilizada por los módulos de Visitas y Notificaciones.
+ */
+async function sendEmail({ to, subject, text, html, attachments }) {
+  if (CONFIGURACION_INVALIDA) {
+    console.log("--- [SIMULACIÓN ENVÍO EMAIL] ---");
+    console.log(`Para: ${to}`);
+    console.log(`Asunto: ${subject}`);
+    console.log("---------------------------------");
+    return { success: true, simulated: true };
+  }
+
+  const mailOptions = {
+    from: EMAIL_FROM,
+    to,
+    subject,
+    text,
+    html,
+    attachments
+  };
+
+  return transporter.sendMail(mailOptions);
+}
+
 module.exports = {
   transporter,
+  sendEmail,
   sendVerificationEmail,
   sendPasswordResetEmail,
 };

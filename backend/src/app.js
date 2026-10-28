@@ -18,6 +18,7 @@ const pagosRoutes = require("./modules/pagos/pagos.routes");
 const notificacionesRoutes = require("./modules/notificaciones/notificaciones.routes");
 const seguridadRoutes = require("./modules/seguridad/seguridad.routes");
 const usuariosRoutes = require("./modules/usuarios/usuarios.routes");
+const visitasRoutes = require("./modules/visitas/visitas.routes");
 
 const app = express();
 
@@ -50,8 +51,10 @@ app.use("/api/auth", authRoutes);
 app.use("/api/casas", casasRoutes);
 app.use("/api/pagos", pagosRoutes);
 app.use("/api/notificaciones", notificacionesRoutes);
+app.use("/api/quejas", notificacionesRoutes); // Alias para solicitudes de quejas y buzón
 app.use("/api/seguridad", seguridadRoutes);
 app.use("/api/usuarios", usuariosRoutes);
+app.use("/api/visitas", visitasRoutes);
 
 // Health check real contra Oracle (clave para demostración de fallas simuladas)
 app.get("/api/health", async (req, res, next) => {

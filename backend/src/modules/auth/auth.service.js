@@ -33,13 +33,13 @@ const HORAS_VIGENCIA_TOKEN = 1;
 /**
  * Autentica un usuario contra la base de datos Oracle y genera su sesión JWT.
  * 
- * @param {string} usernameOrEmail - Nombre de usuario o correo electrónico del solicitante.
- * @param {string} password - Contraseña en texto plano proporcionada en el login.
+ * @param {string} usernameOrEmail Nombre de usuario o correo electrónico del solicitante.
+ * @param {string} password Contraseña en texto plano proporcionada en el login.
  * @returns {Promise<{token: string, user: object}>} Token firmado y perfil básico para sesión.
  * @throws {Error} Excepciones de negocio con códigos descriptivos para el controlador.
  */
 async function authenticateUser(usernameOrEmail, password) {
-  // 1. Consulta SQL parametrizada con JOINs para traer perfil, credenciales y rol
+  // 1. Consulta SQL parametrizada con JOINs para traer perfil, credenciales, rol e id_casa (si aplica)
   const query = `
     SELECT 
       u.id_usuario,
@@ -52,10 +52,12 @@ async function authenticateUser(usernameOrEmail, password) {
       p.id_persona,
       p.nombres,
       p.apellidos,
-      p.correo
+      p.correo,
+      res.id_casa
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
+    LEFT JOIN RESIDENTE res ON p.id_persona = res.id_persona
     WHERE (LOWER(u.nombre_usuario) = LOWER(:identifier) OR LOWER(p.correo) = LOWER(:identifier))
   `;
 
@@ -95,18 +97,21 @@ async function authenticateUser(usernameOrEmail, password) {
   `;
   await executeQuery(updateLoginSql, { id_usuario: userRecord.ID_USUARIO }, { autoCommit: true });
 
-  // 5. Estructuración del Payload para el JWT (información no confidencial)
+  // 5. Estructuración del Payload para el JWT (incluye casaId para contexto del cliente/residente)
   const payload = {
+    id: userRecord.ID_USUARIO,
     userId: userRecord.ID_USUARIO,
     personaId: userRecord.ID_PERSONA,
     username: userRecord.NOMBRE_USUARIO,
     role: userRecord.NOMBRE_ROL,
+    rol: userRecord.NOMBRE_ROL,
     roleId: userRecord.ID_ROL,
+    casaId: userRecord.ID_CASA || null,
   };
 
   // 6. Firma criptográfica del token JWT
   const secretKey = process.env.JWT_SECRET || "fallback_secret_condominio_dev";
-  const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
+  const expiresIn = process.env.JWT_EXPIRES_IN || "8h";
 
   const token = jwt.sign(payload, secretKey, { expiresIn });
 
@@ -119,6 +124,8 @@ async function authenticateUser(usernameOrEmail, password) {
       fullName: `${userRecord.NOMBRES} ${userRecord.APELLIDOS}`,
       email: userRecord.CORREO,
       role: userRecord.NOMBRE_ROL,
+      rol: userRecord.NOMBRE_ROL,
+      casaId: userRecord.ID_CASA || null,
       isVerified: userRecord.ES_VERIFICADO === "SI",
     },
   };
@@ -128,7 +135,7 @@ async function authenticateUser(usernameOrEmail, password) {
  * Obtiene el perfil completo del usuario autenticado en base a su ID.
  * Útil para restablecer el contexto en el frontend (React) tras un refresco de página.
  * 
- * @param {number} userId - Identificador primario de la tabla USUARIO.
+ * @param {number} userId Identificador primario de la tabla USUARIO.
  * @returns {Promise<object>} Perfil consolidado del usuario.
  */
 async function getUserProfileById(userId) {
@@ -143,10 +150,12 @@ async function getUserProfileById(userId) {
       p.apellidos,
       p.correo,
       p.telefono,
-      p.dpi
+      p.dpi,
+      res.id_casa
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
+    LEFT JOIN RESIDENTE res ON p.id_persona = res.id_persona
     WHERE u.id_usuario = :userId AND u.estado = 'ACTIVO'
   `;
 
@@ -168,6 +177,8 @@ async function getUserProfileById(userId) {
     phone: row.TELEFONO,
     dpi: row.DPI,
     role: row.NOMBRE_ROL,
+    rol: row.NOMBRE_ROL,
+    casaId: row.ID_CASA || null,
     isVerified: row.ES_VERIFICADO === "SI",
     lastLogin: row.ULTIMO_LOGIN,
   };
@@ -220,20 +231,7 @@ function generarCodigoVerificacion() {
 /**
  * Auto-registro público de un nuevo usuario.
  *
- * Flujo:
- *   1. Valida duplicados (nombre de usuario, correo y DPI).
- *   2. Inserta la Persona física en PERSONA.
- *   3. Hashea la contraseña con Bcrypt.
- *   4. Genera un código de verificación de 6 dígitos y lo guarda en USUARIO
- *      junto con su expiración (24 h), con es_verificado = 'NO' y estado
- *      = 'INACTIVO' (sujeto a verificación de correo y aprobación admin).
- *   5. Envía el código por correo electrónico.
- *
- * Nota: Oracle no permite abarcar dos executeQuery en una misma transacción;
- * por eso se usan inserciones consecutivas con compensación: si el INSERT en
- * USUARIO falla, se elimina la PERSONA recién creada para no dejar huérfanos.
- *
- * @param {object} data - Datos del formulario de registro.
+ * @param {object} data Datos del formulario de registro.
  * @returns {Promise<{idUsuario: number, message: string}>}
  */
 async function registerUser(data) {
@@ -251,7 +249,7 @@ async function registerUser(data) {
   const correoNorm = String(correo || "").trim().toLowerCase();
   const dpiNorm = dpi ? String(dpi).trim() : null;
 
-  // 1. Verificación temprana de duplicados con mensajes de negocio claros
+  // 1. Verificación temprana de duplicados
   const dupSql = `
     SELECT
       (SELECT COUNT(*) FROM USUARIO WHERE LOWER(nombre_usuario) = :nombreUsuario) AS existe_usuario,
@@ -285,7 +283,7 @@ async function registerUser(data) {
     throw error;
   }
 
-  // 2. Inserción en PERSONA (devuelve la PK autogenerada por Oracle)
+  // 2. Inserción en PERSONA
   const personaSql = `
     INSERT INTO PERSONA (nombres, apellidos, dpi, telefono, correo, estado)
     VALUES (:nombres, :apellidos, :dpi, :telefono, :correo, 'ACTIVO')
@@ -311,10 +309,10 @@ async function registerUser(data) {
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(contrasena, salt);
 
-  // 4. Generación del código de verificación de correo (6 dígitos, 24 h de vigencia)
+  // 4. Generación del código de verificación de correo
   const codigoVerificacion = generarCodigoVerificacion();
 
-  // 5. Inserción en USUARIO con rol temporal, cuenta NO verificada / INACTIVA
+  // 5. Inserción en USUARIO
   const idRolPendiente = await obtenerRolPendienteId();
 
   const usuarioSql = `
@@ -357,7 +355,6 @@ async function registerUser(data) {
 
     idUsuario = usuarioResult.outBinds.idUsuarioOut[0];
   } catch (error) {
-    // Compensación: evitar dejar una PERSONA huérfana si falla el INSERT de USUARIO
     try {
       await executeQuery(
         `DELETE FROM PERSONA WHERE id_persona = :idPersona`,
@@ -370,8 +367,7 @@ async function registerUser(data) {
     throw error;
   }
 
-  // 6. Envío del correo de verificación. Si el correo falla, el registro queda
-  //    creado igualmente (el código permanece en la BD por si se reenvía).
+  // 6. Envío del correo de verificación
   try {
     await sendVerificationEmail(correoNorm, nombres, codigoVerificacion);
   } catch (emailError) {
@@ -390,20 +386,12 @@ async function registerUser(data) {
 /**
  * Verifica el correo electrónico de una cuenta usando el código de 6 dígitos.
  *
- * Reglas:
- *   1. Busca un USUARIO con ese codigo_verificacion vigente (expiracion_codigo
- *      mayor al SYSTIMESTAMP actual).
- *   2. Si no existe o ya expiró, lanza un error 400.
- *   3. Si es válido, marca es_verificado = 'SI' y limpia los campos del código.
- *      El estado permanece 'INACTIVO' hasta la aprobación del administrador.
- *
- * @param {string} codigo - Código numérico de 6 dígitos recibido por correo.
+ * @param {string} codigo Código numérico de 6 dígitos recibido por correo.
  * @returns {Promise<{message: string}>}
  */
 async function verifyEmailCode(codigo) {
   const codigoNorm = String(codigo || "").trim();
 
-  // 1. Búsqueda del código vigente (el más reciente, por si hubiera colisión)
   const findSql = `
     SELECT id_usuario
     FROM USUARIO
@@ -426,7 +414,6 @@ async function verifyEmailCode(codigo) {
 
   const idUsuario = findResult.rows[0].ID_USUARIO;
 
-  // 2. Confirmación de correo y limpieza del código de un solo uso
   const updateSql = `
     UPDATE USUARIO
     SET es_verificado = 'SI',
@@ -444,21 +431,12 @@ async function verifyEmailCode(codigo) {
 /**
  * Reenvía el código de verificación a un correo que aún no ha sido verificado.
  *
- * Reglas:
- *   1. Busca la cuenta mediante JOIN entre USUARIO y PERSONA por correo.
- *   2. Si no existe, lanza 404. Si ya está verificado (es_verificado = 'SI'),
- *      lanza 400.
- *   3. Genera un nuevo código de 6 dígitos, actualiza codigo_verificacion y
- *      extiende expiracion_codigo a 24 h desde el momento del reenvío.
- *   4. Envía el nuevo correo con sendVerificationEmail.
- *
- * @param {string} correo - Correo electrónico del solicitante.
+ * @param {string} correo Correo electrónico del solicitante.
  * @returns {Promise<{message: string}>}
  */
 async function resendVerificationCode(correo) {
   const correoNorm = String(correo || "").trim().toLowerCase();
 
-  // 1. Búsqueda de la cuenta asociada al correo
   const findSql = `
     SELECT u.id_usuario, u.es_verificado, u.fecha_creacion, p.nombres
     FROM USUARIO u
@@ -485,7 +463,6 @@ async function resendVerificationCode(correo) {
     throw error;
   }
 
-  // 2. Generación del nuevo código y actualización en BD
   const nuevoCodigo = generarCodigoVerificacion();
 
   const updateSql = `
@@ -500,7 +477,6 @@ async function resendVerificationCode(correo) {
     { autoCommit: true }
   );
 
-  // 3. Envío del nuevo correo (si falla, el código queda en BD para reintentar)
   try {
     await sendVerificationEmail(correoNorm, usuario.NOMBRES, nuevoCodigo);
   } catch (emailError) {
@@ -515,26 +491,15 @@ async function resendVerificationCode(correo) {
 /**
  * Solicita el restablecimiento de contraseña para un correo registrado.
  *
- * Flujo:
- *   1. Busca la cuenta con JOIN entre USUARIO y PERSONA por correo.
- *   2. Por seguridad, si no existe la cuenta NO se lanza error: se retorna
- *      un mensaje genérico de éxito para no revelar qué correos están
- *      registrados (evita enumeración de usuarios).
- *   3. Si existe, genera un token seguro y lo persiste junto con su
- *      expiración (1 hora).
- *   4. Envía el enlace de restablecimiento por correo.
- *
- * @param {string} correo - Correo electrónico del solicitante.
+ * @param {string} correo Correo electrónico del solicitante.
  * @returns {Promise<{message: string}>} Mensaje genérico de confirmación.
  */
 async function forgotPassword(correo) {
   const correoNorm = String(correo || "").trim().toLowerCase();
 
-  // Mensaje genérico único (no revela si el correo existe o no)
   const mensajeGenerico =
     "Si el correo está registrado, recibirá un enlace para restablecer su contraseña.";
 
-  // 1. Búsqueda de la cuenta asociada al correo
   const findSql = `
     SELECT u.id_usuario, p.nombres
     FROM USUARIO u
@@ -545,16 +510,13 @@ async function forgotPassword(correo) {
   const findResult = await executeQuery(findSql, { correo: correoNorm });
 
   if (findResult.rows.length === 0) {
-    // No se revela la ausencia de la cuenta
     return { message: mensajeGenerico };
   }
 
   const usuario = findResult.rows[0];
 
-  // 2. Generación del token seguro (64 caracteres hexadecimales)
   const token = crypto.randomBytes(32).toString("hex");
 
-  // 3. Persistencia del token y su expiración (1 hora)
   const updateSql = `
     UPDATE USUARIO
     SET token_recuperacion = :token,
@@ -567,7 +529,6 @@ async function forgotPassword(correo) {
     { autoCommit: true }
   );
 
-  // 4. Envío del correo (si falla, no se expone el error al solicitante)
   try {
     await sendPasswordResetEmail(correoNorm, usuario.NOMBRES, token);
   } catch (emailError) {
@@ -582,21 +543,13 @@ async function forgotPassword(correo) {
 /**
  * Restablece la contraseña de una cuenta a partir de un token vigente.
  *
- * Reglas:
- *   1. Busca un USUARIO cuyo token_recuperacion coincida y cuya
- *      expiracion_token aún sea mayor al SYSTIMESTAMP actual.
- *   2. Si no existe o ya expiró, lanza un error 400.
- *   3. Si es válido, hashea la nueva contraseña con Bcrypt y actualiza
- *      USUARIO, limpiando el token y su expiración (de un solo uso).
- *
- * @param {string} token - Token recibido en el enlace de recuperación.
- * @param {string} nuevaContrasena - Nueva contraseña en texto plano.
+ * @param {string} token Token recibido en el enlace de recuperación.
+ * @param {string} nuevaContrasena Nueva contraseña en texto plano.
  * @returns {Promise<{message: string}>}
  */
 async function resetPassword(token, nuevaContrasena) {
   const tokenNorm = String(token || "").trim();
 
-  // 1. Búsqueda del token vigente
   const findSql = `
     SELECT id_usuario
     FROM USUARIO
@@ -616,11 +569,9 @@ async function resetPassword(token, nuevaContrasena) {
 
   const idUsuario = findResult.rows[0].ID_USUARIO;
 
-  // 2. Hash de la nueva contraseña
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(nuevaContrasena, salt);
 
-  // 3. Actualización de la contraseña y limpieza del token de un solo uso
   const updateSql = `
     UPDATE USUARIO
     SET contrasena = :contrasena,

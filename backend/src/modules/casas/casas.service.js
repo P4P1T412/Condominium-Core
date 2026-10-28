@@ -1,24 +1,22 @@
 /**
  * =============================================================================
- * CAPA DE SERVICIO: GESTIÓN DE CASAS Y EXPEDIENTES FAMILIARES
+ * CAPA DE SERVICIO: GESTIÓN DE CASAS Y EXPEDIENTES FAMILIARES DE CONDÓMINOS
  * =============================================================================
  * Descripción:
- *   Contiene las consultas SQL transaccionales para consultar, registrar
- *   y actualizar viviendas, así como vincular residentes a cada inmueble.
+ *   Consultas SQL transaccionales para consultar, registrar y actualizar 
+ *   viviendas, vinculando residentes/condóminos a sus inmuebles de Oracle DB.
  * =============================================================================
  */
 
 const { executeQuery } = require("../../config/db");
 
 /**
- * Obtiene el listado consolidado de casas con información de sus propietarios.
+ * Obtiene el listado consolidado de casas con información de propietarios y residentes.
  * 
- * @param {object} filters - Opciones de filtrado (estado, bloque).
- * @returns {Promise<Array>} Lista de casas registradas.
+ * @param {object} filters Opciones de filtrado (estado, bloque).
+ * @returns {Promise<Array>} Lista de casas con condóminos asociados.
  */
 async function getAllCasas(filters = {}) {
-  // El estado se calcula a partir del censo activo para que el catálogo no
-  // dependa de que la columna CASA.estado haya quedado sincronizada.
   let query = `
     WITH casas_estado AS (
       SELECT
@@ -37,7 +35,12 @@ async function getAllCasas(filters = {}) {
         p.nombres || ' ' || p.apellidos AS propietario_nombre,
         p.telefono AS propietario_telefono,
         p.correo AS propietario_correo,
-        (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes
+        (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes,
+        (
+          SELECT r.id_residente 
+          FROM RESIDENTE r 
+          WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO' AND ROWNUM = 1
+        ) AS id_residente_principal
       FROM CASA c
       JOIN PERSONA p ON c.id_propietario = p.id_persona
     )
@@ -60,28 +63,56 @@ async function getAllCasas(filters = {}) {
   query += ` ORDER BY bloque ASC, numero_casa ASC`;
 
   const result = await executeQuery(query, binds);
+  const rows = result.rows || result.data || result || [];
 
-  return result.rows.map((row) => ({
-    id: row.ID_CASA,
-    numeroCasa: row.NUMERO_CASA,
-    bloque: row.BLOQUE,
-    direccion: row.DIRECCION,
-    estado: row.ESTADO,
-    totalHabitantes: row.TOTAL_HABITANTES,
-    fechaCreacion: row.FECHA_CREACION,
-    propietario: {
-      id: row.ID_PROPIETARIO,
-      nombre: row.PROPIETARIO_NOMBRE,
-      telefono: row.PROPIETARIO_TELEFONO,
-      correo: row.PROPIETARIO_CORREO,
-    },
-  }));
+  return rows.map((row) => {
+    const idCasa = row.ID_CASA ?? row.id_casa;
+    const numeroCasa = row.NUMERO_CASA ?? row.numero_casa;
+    const bloque = row.BLOQUE ?? row.bloque;
+    const direccion = row.DIRECCION ?? row.direccion;
+    const estado = row.ESTADO ?? row.estado;
+    const totalHabitantes = row.TOTAL_HABITANTES ?? row.total_habitantes ?? 0;
+    const fechaCreacion = row.FECHA_CREACION ?? row.fecha_creacion;
+    const idPropietario = row.ID_PROPIETARIO ?? row.id_propietario;
+    const propietarioNombre = row.PROPIETARIO_NOMBRE ?? row.propietario_nombre ?? "Propietario Sin Nombre";
+    const propietarioTelefono = row.PROPIETARIO_TELEFONO ?? row.propietario_telefono;
+    const propietarioCorreo = row.PROPIETARIO_CORREO ?? row.propietario_correo;
+    const idResidentePrincipal = row.ID_RESIDENTE_PRINCIPAL ?? row.id_residente_principal;
+
+    return {
+      id: idCasa,
+      id_casa: idCasa,
+      ID_CASA: idCasa,
+      numeroCasa: numeroCasa,
+      numero_casa: numeroCasa,
+      NUMERO_CASA: numeroCasa,
+      bloque: bloque,
+      BLOQUE: bloque,
+      direccion: direccion,
+      DIRECCION: direccion,
+      estado: estado,
+      ESTADO: estado,
+      totalHabitantes: totalHabitantes,
+      id_residente: idResidentePrincipal,
+      ID_RESIDENTE: idResidentePrincipal,
+      nombre_condomino: propietarioNombre,
+      NOMBRE_CONDOMINO: propietarioNombre,
+      fechaCreacion: fechaCreacion,
+      propietario: {
+        id: idPropietario,
+        id_propietario: idPropietario,
+        nombre: propietarioNombre,
+        telefono: propietarioTelefono,
+        correo: propietarioCorreo,
+      },
+    };
+  });
 }
 
 /**
  * Obtiene el detalle de una casa junto con su expediente de residentes activos.
  * 
- * @param {number} idCasa - ID primario de la casa.
+ * @param {number} idCasa ID primario de la casa.
  * @returns {Promise<object>} Detalle de la casa y lista de sus habitantes.
  */
 async function getCasaById(idCasa) {
@@ -108,16 +139,17 @@ async function getCasaById(idCasa) {
     WHERE c.id_casa = :idCasa
   `;
 
-  const resultCasa = await executeQuery(queryCasa, { idCasa });
+  const resultCasa = await executeQuery(queryCasa, { idCasa: Number(idCasa) });
+  const rowsCasa = resultCasa.rows || resultCasa.data || resultCasa || [];
 
-  if (resultCasa.rows.length === 0) {
+  if (rowsCasa.length === 0) {
     const error = new Error("La propiedad consultada no existe.");
     error.statusCode = 404;
     error.code = "CASA_NOT_FOUND";
     throw error;
   }
 
-  const casa = resultCasa.rows[0];
+  const casa = rowsCasa[0];
 
   // Consulta de los miembros del núcleo familiar o inquilinos vinculados
   const queryResidentes = `
@@ -139,32 +171,35 @@ async function getCasaById(idCasa) {
     ORDER BY r.es_principal DESC, p.apellidos ASC
   `;
 
-  const resultResidentes = await executeQuery(queryResidentes, { idCasa });
+  const resultResidentes = await executeQuery(queryResidentes, { idCasa: Number(idCasa) });
+  const rowsRes = resultResidentes.rows || resultResidentes.data || resultResidentes || [];
 
   return {
-    id: casa.ID_CASA,
-    numeroCasa: casa.NUMERO_CASA,
-    bloque: casa.BLOQUE,
-    direccion: casa.DIRECCION,
-    estado: casa.ESTADO,
-    totalHabitantes: casa.TOTAL_HABITANTES,
+    id: casa.ID_CASA ?? casa.id_casa,
+    id_casa: casa.ID_CASA ?? casa.id_casa,
+    numeroCasa: casa.NUMERO_CASA ?? casa.numero_casa,
+    bloque: casa.BLOQUE ?? casa.bloque,
+    direccion: casa.DIRECCION ?? casa.direccion,
+    estado: casa.ESTADO ?? casa.estado,
+    totalHabitantes: casa.TOTAL_HABITANTES ?? casa.total_habitantes ?? 0,
     propietario: {
-      id: casa.ID_PROPIETARIO,
-      nombre: casa.PROPIETARIO_NOMBRE,
-      dpi: casa.DPI,
-      telefono: casa.TELEFONO,
-      correo: casa.CORREO,
+      id: casa.ID_PROPIETARIO ?? casa.id_propietario,
+      nombre: casa.PROPIETARIO_NOMBRE ?? casa.propietario_nombre,
+      dpi: casa.DPI ?? casa.dpi,
+      telefono: casa.TELEFONO ?? casa.telefono,
+      correo: casa.CORREO ?? casa.correo,
     },
-    residentes: resultResidentes.rows.map((res) => ({
-      idResidente: res.ID_RESIDENTE,
-      idPersona: res.ID_PERSONA,
-      nombreCompleto: `${res.NOMBRES} ${res.APELLIDOS}`,
-      identificacion: res.DPI || res.IDENTIFICACION_ALTERNATIVA,
-      telefono: res.TELEFONO,
-      correo: res.CORREO,
-      tipoResidente: res.TIPO_RESIDENTE,
-      esPrincipal: res.ES_PRINCIPAL === "SI",
-      fechaIngreso: res.FECHA_INGRESO,
+    residentes: rowsRes.map((res) => ({
+      idResidente: res.ID_RESIDENTE ?? res.id_residente,
+      id_residente: res.ID_RESIDENTE ?? res.id_residente,
+      idPersona: res.ID_PERSONA ?? res.id_persona,
+      nombreCompleto: `${res.NOMBRES ?? res.nombres ?? ""} ${res.APELLIDOS ?? res.apellidos ?? ""}`.trim(),
+      identificacion: res.DPI || res.dpi || res.IDENTIFICACION_ALTERNATIVA || res.identificacion_alternativa,
+      telefono: res.TELEFONO ?? res.telefono,
+      correo: res.CORREO ?? res.correo,
+      tipoResidente: res.TIPO_RESIDENTE ?? res.tipo_residente,
+      esPrincipal: (res.ES_PRINCIPAL ?? res.es_principal) === "SI",
+      fechaIngreso: res.FECHA_INGRESO ?? res.fecha_ingreso,
     })),
   };
 }
@@ -172,12 +207,13 @@ async function getCasaById(idCasa) {
 /**
  * Registra una nueva vivienda asignando un propietario existente.
  * 
- * @param {object} casaData - Datos de la vivienda.
- * @param {number} userId - ID del administrador que registra la casa.
+ * @param {object} casaData Datos de la vivienda.
+ * @param {number} userId ID del usuario que registra la casa.
  * @returns {Promise<object>} Identificador de la casa creada.
  */
 async function createCasa(casaData, userId) {
   const { numeroCasa, bloque, direccion, idPropietario, estado } = casaData;
+  const oracledb = require("oracledb");
 
   const insertSql = `
     INSERT INTO CASA (
@@ -198,13 +234,13 @@ async function createCasa(casaData, userId) {
   `;
 
   const binds = {
-    numeroCasa: numeroCasa.trim(),
-    bloque: bloque.trim(),
-    direccion: direccion.trim(),
+    numeroCasa: String(numeroCasa).trim(),
+    bloque: String(bloque).trim(),
+    direccion: String(direccion).trim(),
     idPropietario: idPropietario ? Number(idPropietario) : null,
     estado: estado || "DISPONIBLE",
-    userId,
-    id_casa_out: { dir: require("oracledb").BIND_OUT, type: require("oracledb").NUMBER },
+    userId: userId ? Number(userId) : null,
+    id_casa_out: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   };
 
   const result = await executeQuery(insertSql, binds, { autoCommit: true });
@@ -214,11 +250,9 @@ async function createCasa(casaData, userId) {
 }
 
 /**
- * Recalcula y persiste el estado de ocupación de una vivienda a partir de su
- * censo activo. Se invoca después de vincular o desvincular habitantes para
- * que el catálogo y el censo mantengan la misma información.
+ * Recalcula y persiste el estado de ocupación de una vivienda a partir de su censo activo.
  *
- * @param {number} idCasa - ID de la vivienda a sincronizar.
+ * @param {number} idCasa ID de la vivienda a sincronizar.
  */
 async function sincronizarEstadoCasa(idCasa) {
   const updateSql = `
@@ -242,16 +276,12 @@ async function sincronizarEstadoCasa(idCasa) {
 /**
  * Asocia un residente físico (familiar o inquilino) a una vivienda.
  *
- * Como la tabla RESIDENTE conserva el histórico (desvinculaciones mediante
- * estado = 'INACTIVO'), si la persona ya tuvo un vínculo previo con la misma
- * casa se reactiva ese registro en lugar de insertar uno nuevo (la restricción
- * uq_persona_casa es única por par persona/casa).
- *
- * @param {number} idCasa - ID de la vivienda.
- * @param {object} residenteData - Datos del habitante y su clasificación.
+ * @param {number} idCasa ID de la vivienda.
+ * @param {object} residenteData Datos del habitante y su clasificación.
  */
 async function addResidenteToCasa(idCasa, residenteData) {
   const { idPersona, tipoResidente, esPrincipal } = residenteData;
+  const oracledb = require("oracledb");
 
   const tipoFinal = tipoResidente || "FAMILIAR";
   const principalFinal = esPrincipal ? "SI" : "NO";
@@ -262,12 +292,19 @@ async function addResidenteToCasa(idCasa, residenteData) {
     FROM RESIDENTE
     WHERE id_persona = :idPersona AND id_casa = :idCasa
   `;
-  const checkResult = await executeQuery(checkSql, { idPersona, idCasa });
+  const checkResult = await executeQuery(checkSql, {
+    idPersona: Number(idPersona),
+    idCasa: Number(idCasa),
+  });
 
-  if (checkResult.rows.length > 0) {
-    const existente = checkResult.rows[0];
+  const rowsCheck = checkResult.rows || checkResult.data || checkResult || [];
 
-    if (existente.ESTADO === "ACTIVO") {
+  if (rowsCheck.length > 0) {
+    const existente = rowsCheck[0];
+    const estadoExistente = existente.ESTADO ?? existente.estado;
+    const idResidenteExistente = existente.ID_RESIDENTE ?? existente.id_residente;
+
+    if (estadoExistente === "ACTIVO") {
       const error = new Error("La persona ya se encuentra vinculada a esta vivienda.");
       error.statusCode = 409;
       error.code = "RESIDENT_ALREADY_LINKED";
@@ -289,7 +326,7 @@ async function addResidenteToCasa(idCasa, residenteData) {
       {
         tipoResidente: tipoFinal,
         esPrincipal: principalFinal,
-        idResidente: existente.ID_RESIDENTE,
+        idResidente: Number(idResidenteExistente),
       },
       { autoCommit: true }
     );
@@ -297,7 +334,7 @@ async function addResidenteToCasa(idCasa, residenteData) {
     await sincronizarEstadoCasa(idCasa);
 
     return {
-      id: existente.ID_RESIDENTE,
+      id: idResidenteExistente,
       message: "Residente reconectado a la vivienda.",
     };
   }
@@ -320,11 +357,11 @@ async function addResidenteToCasa(idCasa, residenteData) {
   `;
 
   const binds = {
-    idPersona,
-    idCasa,
+    idPersona: Number(idPersona),
+    idCasa: Number(idCasa),
     tipoResidente: tipoFinal,
     esPrincipal: principalFinal,
-    id_residente_out: { dir: require("oracledb").BIND_OUT, type: require("oracledb").NUMBER },
+    id_residente_out: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   };
 
   const result = await executeQuery(insertSql, binds, { autoCommit: true });
@@ -336,11 +373,8 @@ async function addResidenteToCasa(idCasa, residenteData) {
 /**
  * Desvincula (baja lógica) a un residente de una vivienda.
  *
- * No se elimina el registro para conservar el histórico del censo: se marca
- * estado = 'INACTIVO' y se registra la fecha de salida.
- *
- * @param {number} idCasa - ID de la vivienda.
- * @param {number} idResidente - ID del vínculo RESIDENTE a desactivar.
+ * @param {number} idCasa ID de la vivienda.
+ * @param {number} idResidente ID del vínculo RESIDENTE a desactivar.
  * @returns {Promise<{message: string}>}
  */
 async function removeResidenteFromCasa(idCasa, idResidente) {
@@ -355,7 +389,7 @@ async function removeResidenteFromCasa(idCasa, idResidente) {
 
   const result = await executeQuery(
     updateSql,
-    { idResidente, idCasa },
+    { idResidente: Number(idResidente), idCasa: Number(idCasa) },
     { autoCommit: true }
   );
 
@@ -369,26 +403,6 @@ async function removeResidenteFromCasa(idCasa, idResidente) {
   await sincronizarEstadoCasa(idCasa);
 
   return { message: "Residente desvinculado de la vivienda correctamente." };
-}
-
-/**
- * Obtiene el listado de personas registradas en Oracle para alimentar los selectores
- */
-async function listarPersonas(connection) {
-  const sql = `
-    SELECT 
-      ID_PERSONA as "idPersona",
-      NOMBRES as "nombres",
-      APELLIDOS as "apellidos",
-      NOMBRES || ' ' || APELLIDOS as "nombreCompleto",
-      DPI as "dpi",
-      TELEFONO as "telefono",
-      CORREO as "correo"
-    FROM PERSONA
-    ORDER BY NOMBRES ASC
-  `;
-  const result = await connection.execute(sql, [], { outFormat: 4002 }); // 4002 = oracledb.OUT_FORMAT_OBJECT
-  return result.rows;
 }
 
 /**
@@ -411,23 +425,37 @@ async function getPersonas() {
   `;
 
   const result = await executeQuery(query, {});
+  const rows = result.rows || result.data || result || [];
 
-  return result.rows.map((row) => ({
-    idPersona: row.ID_PERSONA,
-    nombres: row.NOMBRES,
-    apellidos: row.APELLIDOS,
-    nombreCompleto: row.NOMBRE_COMPLETO,
-    dpi: row.DPI,
-    telefono: row.TELEFONO,
-    correo: row.CORREO,
-  }));
+  return rows.map((row) => {
+    const idPersona = row.ID_PERSONA ?? row.id_persona;
+    const nombres = row.NOMBRES ?? row.nombres;
+    const apellidos = row.APELLIDOS ?? row.apellidos;
+    const nombreCompleto = row.NOMBRE_COMPLETO ?? row.nombre_completo ?? `${nombres} ${apellidos}`.trim();
+    const dpi = row.DPI ?? row.dpi;
+    const telefono = row.TELEFONO ?? row.telefono;
+    const correo = row.CORREO ?? row.correo;
+
+    return {
+      idPersona,
+      id_persona: idPersona,
+      ID_PERSONA: idPersona,
+      nombres,
+      apellidos,
+      nombreCompleto,
+      nombre_completo: nombreCompleto,
+      dpi,
+      telefono,
+      correo,
+    };
+  });
 }
 
 /**
  * Actualiza los datos generales de una vivienda y/o su propietario asignado.
  * 
- * @param {number} idCasa - ID de la casa a actualizar.
- * @param {object} casaData - Campos actualizados de la casa.
+ * @param {number} idCasa ID de la casa a actualizar.
+ * @param {object} casaData Campos actualizados de la casa.
  * @returns {Promise<object>} Confirmación de la actualización.
  */
 async function updateCasa(idCasa, casaData) {
@@ -445,9 +473,9 @@ async function updateCasa(idCasa, casaData) {
   `;
 
   const binds = {
-    numeroCasa: numeroCasa.trim(),
-    bloque: bloque.trim(),
-    direccion: direccion.trim(),
+    numeroCasa: String(numeroCasa).trim(),
+    bloque: String(bloque).trim(),
+    direccion: String(direccion).trim(),
     estado: estado || "DISPONIBLE",
     idPropietario: idPropietario ? Number(idPropietario) : null,
     idCasa: Number(idCasa),
@@ -460,10 +488,11 @@ async function updateCasa(idCasa, casaData) {
 }
 
 /**
- * Registra a un nuevo ciudadano en el padrón (tabla PERSONA).
+ * Registra a una nueva persona en la tabla PERSONA.
  */
 async function createPersona(personaData) {
   const { nombres, apellidos, dpi, telefono, correo } = personaData;
+  const oracledb = require("oracledb");
 
   const insertSql = `
     INSERT INTO PERSONA (
@@ -482,12 +511,12 @@ async function createPersona(personaData) {
   `;
 
   const binds = {
-    nombres: nombres.trim(),
-    apellidos: apellidos.trim(),
-    dpi: dpi ? dpi.trim() : null,
-    telefono: telefono ? telefono.trim() : null,
-    correo: correo ? correo.trim() : null,
-    id_persona_out: { dir: require("oracledb").BIND_OUT, type: require("oracledb").NUMBER },
+    nombres: String(nombres).trim(),
+    apellidos: String(apellidos).trim(),
+    dpi: dpi ? String(dpi).trim() : null,
+    telefono: telefono ? String(telefono).trim() : null,
+    correo: correo ? String(correo).trim() : null,
+    id_persona_out: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   };
 
   const result = await executeQuery(insertSql, binds, { autoCommit: true });
@@ -495,6 +524,7 @@ async function createPersona(personaData) {
 
   return {
     idPersona: newId,
+    id_persona: newId,
     nombreCompleto: `${nombres.trim()} ${apellidos.trim()}`,
     dpi,
     telefono,
