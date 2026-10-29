@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog 
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog" 
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:n0="http://www.oracle.com/xml/ns/dbchangelog-ext" 
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog 
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+ <changeSet id="a125cdaeb45dc4700f3bc65b2d98e7c9d6518af0" author="(CONDOMINIO_APP)-Generated" failOnError="true"    runOnChange="false"  runAlways="false"  runInTransaction="false"  >
+  <n0:createSxmlObject objectName="VW_ESTADO_CUENTA" objectType="VIEW" ownerName="CONDOMINIO_APP"  replaceIfExists="false" >
+    <n0:source><![CDATA[
+  <VIEW xmlns="http://xmlns.oracle.com/ku" version="1.0">
+   <SCHEMA>%USER_NAME%</SCHEMA>
+   <NAME>VW_ESTADO_CUENTA</NAME>
+   <DEFAULT_COLLATION>USING_NLS_COMP</DEFAULT_COLLATION>
+   <COL_LIST>
+      <COL_LIST_ITEM>
+         <NAME>ID_CUOTA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>ID_CASA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>NUMERO_CASA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>CONCEPTO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>PERIODO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>MONTO_TOTAL</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>TOTAL_PAGADO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>SALDO_PENDIENTE</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>FECHA_EMISION</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>FECHA_VENCIMIENTO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>ESTADO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+   </COL_LIST>
+   <ANNOTATION_LIST></ANNOTATION_LIST>
+   <SUBQUERY>SELECT 
+    cu.id_cuota,
+    cu.id_casa,
+    c.numero_casa,
+    cu.concepto,
+    cu.periodo,
+    cu.monto_total,
+    NVL(pagos.total_pagado, 0) AS total_pagado,
+    (cu.monto_total - NVL(pagos.total_pagado, 0)) AS saldo_pendiente,
+    cu.fecha_emision,
+    cu.fecha_vencimiento,
+    cu.estado
+FROM CUOTA cu
+JOIN CASA c ON cu.id_casa = c.id_casa
+LEFT JOIN (
+    SELECT id_cuota, SUM(monto_pagado) AS total_pagado
+    FROM PAGO
+    WHERE estado = 'VALIDO'
+    GROUP BY id_cuota
+) pagos ON cu.id_cuota = pagos.id_cuota</SUBQUERY>
+</VIEW>]]></n0:source>
+      </n0:createSxmlObject>
+ </changeSet>
+</databaseChangeLog>

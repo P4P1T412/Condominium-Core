@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog 
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog" 
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:n0="http://www.oracle.com/xml/ns/dbchangelog-ext" 
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog 
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+ <changeSet id="de4d60a22759bdf691524ddfb853dd445d9086a7" author="(CONDOMINIO_APP)-Generated" failOnError="true"    runOnChange="false"  runAlways="false"  runInTransaction="false"  >
+  <n0:createOracleProcedure objectName="SP_REGISTRAR_PAGO" objectType="PROCEDURE" ownerName="CONDOMINIO_APP"  replaceIfExists="false" >
+    <n0:source><![CDATA[CREATE OR REPLACE EDITIONABLE PROCEDURE "%USER_NAME%"."SP_REGISTRAR_PAGO" (
+    p_id_cuota         IN NUMBER,
+    p_monto            IN NUMBER,
+    p_metodo_pago      IN VARCHAR2,
+    p_referencia       IN VARCHAR2,
+    p_comprobante_url  IN VARCHAR2,
+    p_id_usuario       IN NUMBER,
+    p_ip_origen        IN VARCHAR2,
+    p_id_pago_out      OUT NUMBER
+) AS
+BEGIN
+    INSERT INTO PAGO (
+        id_cuota,
+        monto_pagado,
+        metodo_pago,
+        referencia,
+        comprobante_url,
+        estado,
+        creado_por
+    ) VALUES (
+        p_id_cuota,
+        p_monto,
+        p_metodo_pago,
+        p_referencia,
+        p_comprobante_url,
+        'PENDIENTE',
+        p_id_usuario
+    ) RETURNING id_pago INTO p_id_pago_out;
+
+    INSERT INTO BITACORA_AUDITORIA (
+        id_usuario,
+        modulo,
+        accion,
+        tabla_afectada,
+        id_registro_afectado,
+        valor_nuevo,
+        ip_origen
+    ) VALUES (
+        p_id_usuario,
+        'PAGOS',
+        'REGISTRAR_COMPROBANTE',
+        'PAGO',
+        p_id_pago_out,
+        '{"id_cuota": ' || p_id_cuota || ', "monto": ' || p_monto || ', "estado": "PENDIENTE"}',
+        p_ip_origen
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END SP_REGISTRAR_PAGO;
+/]]></n0:source>
+      </n0:createOracleProcedure>
+ </changeSet>
+</databaseChangeLog>

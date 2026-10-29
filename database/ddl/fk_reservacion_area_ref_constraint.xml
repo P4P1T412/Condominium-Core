@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog 
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog" 
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:n0="http://www.oracle.com/xml/ns/dbchangelog-ext" 
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog 
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+ <changeSet id="db465685a242155909cdd3c07f6ace65748e441e" author="(CONDOMINIO_APP)-Generated" failOnError="true"    runOnChange="false"  runAlways="false"  runInTransaction="false"  >
+  <n0:createOracleRefConstraint objectName="FK_RESERVACION_AREA" objectType="REF_CONSTRAINT" ownerName="CONDOMINIO_APP"  replaceIfExists="false" >
+    <n0:source><![CDATA[ALTER TABLE "%USER_NAME%"."RESERVACION" ADD CONSTRAINT "FK_RESERVACION_AREA" FOREIGN KEY ("ID_AREA")
+	  REFERENCES "%USER_NAME%"."AREA_COMUN" ("ID_AREA") ENABLE;]]></n0:source>
+      </n0:createOracleRefConstraint>
+ </changeSet>
+</databaseChangeLog>

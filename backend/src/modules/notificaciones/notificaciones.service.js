@@ -4,7 +4,7 @@ const { sendWhatsApp } = require("../../utils/whatsapp.service");
 
 /**
  * Obtiene la lista de comunicados filtrando según el rol del usuario.
- * Soporta roles 'CONDOMINO' y 'RESIDENTE', además de 'ADMIN' / 'GARITA'.
+ * Soporta roles 'CONDOMINO', 'RESIDENTE', 'ADMIN', 'ADMINISTRADOR' y 'GARITA'.
  */
 exports.obtenerComunicados = async (user) => {
   const rolUpper = String(user?.rol || user?.role || "").toUpperCase();
@@ -18,7 +18,7 @@ exports.obtenerComunicados = async (user) => {
           c.id_comunicado,
           c.titulo,
           c.contenido,
-          c.canal_envio,
+          NVL(c.canal_envio, 'APP') AS canal_envio,
           c.fecha_publicacion,
           c.estado,
           u.nombre_usuario AS autor
@@ -41,7 +41,7 @@ exports.obtenerComunicados = async (user) => {
         c.id_comunicado,
         c.titulo,
         c.contenido,
-        c.canal_envio,
+        NVL(c.canal_envio, 'APP') AS canal_envio,
         c.fecha_publicacion,
         c.estado,
         c.id_casa_destino,
@@ -56,12 +56,12 @@ exports.obtenerComunicados = async (user) => {
     return result.rows || result.data || result || [];
   } catch (error) {
     console.error("Aviso: Error en consulta de comunicados (defensivo):", error.message);
-    return []; // Responde con array vacío para evitar un error 500 en el frontend
+    return []; // Responde con array vacío para proteger el frontend
   }
 };
 
 /**
- * Registra un comunicado en Oracle DB (Buzón de quejas / avisos) y gestiona el envío multicanal.
+ * Registra un comunicado en Oracle DB y gestiona el despacho multicanal.
  */
 exports.crearComunicado = async (datos, adminId) => {
   const {
@@ -73,7 +73,7 @@ exports.crearComunicado = async (datos, adminId) => {
     fechaVencimiento
   } = datos;
 
-  // Manejo de fecha opcional sin romper TO_DATE de Oracle
+  // Manejo de inserción sin romper restricciones TO_DATE
   const sqlInsert = `
     INSERT INTO COMUNICADO 
       (id_usuario, id_casa_destino, titulo, contenido, canal_envio, fecha_vencimiento)
@@ -122,7 +122,7 @@ exports.crearComunicado = async (datos, adminId) => {
             subject: `[Aviso Condominio] ${titulo}`,
             text: contenido,
             html: `<h3>${titulo}</h3><p>${contenido}</p>`
-          }).catch((err) => console.error(`Error enviando email a ${correo}:`, err));
+          }).catch((err) => console.error(`Error enviando email a ${correo}:`, err.message));
         }
 
         // Envío por WhatsApp
@@ -130,7 +130,7 @@ exports.crearComunicado = async (datos, adminId) => {
           sendWhatsApp({
             to: telefono,
             message: `*Aviso Importante - Condominio*\n\n*${titulo}*\n${contenido}`
-          }).catch((err) => console.error(`Error enviando WhatsApp a ${telefono}:`, err));
+          }).catch((err) => console.error(`Error enviando WhatsApp a ${telefono}:`, err.message));
         }
       }
     } catch (errNotif) {

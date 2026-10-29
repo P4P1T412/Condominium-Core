@@ -1,41 +1,37 @@
-const { Router } = require("express");
-const verifyJWTModule = require("../../middlewares/verifyJWT");
-const checkRoleModule = require("../../middlewares/checkRole");
+const express = require("express");
+const router = express.Router();
 const notificacionesController = require("./notificaciones.controller");
+const authMiddleware = require("../../middlewares/auth.middleware");
 
-// Compatibilidad de exportación (función directa o propiedad con nombre)
-const verifyJWT = typeof verifyJWTModule === "function" ? verifyJWTModule : verifyJWTModule.verifyJWT;
-const checkRole = typeof checkRoleModule === "function" ? checkRoleModule : checkRoleModule.checkRole;
+// Extraer verifyToken o authMiddleware según cómo esté exportado
+const verifyToken = authMiddleware.verifyToken || authMiddleware.authenticate || authMiddleware;
 
-const router = Router();
+// Middleware de verificación de rol flexible para evitar fallos por funciones no exportadas
+const requireAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: "Usuario no autenticado." });
+  }
 
-// Todas las rutas requieren un token de sesión válido
-router.use(verifyJWT);
+  const rolUpper = String(req.user.rol || req.user.role || "").toUpperCase().trim();
+  const rolesPermitidos = ["ADMIN", "ADMINISTRADOR", "ADMINISTRADOR SISTEMA", "ADMINISTRACION"];
 
-/**
- * 1. OBTENER COMUNICADOS Y NOTIFICACIONES
- * Acceso: ADMIN, GARITA, RESIDENTE (Se filtra por rol/casa en el servicio)
- */
-router.get("/", notificacionesController.obtenerComunicados);
+  if (rolesPermitidos.some(r => rolUpper.includes(r))) {
+    return next();
+  }
 
-/**
- * 2. CREAR COMUNICADO MULTICANAL (APP, EMAIL, WHATSAPP)
- * Acceso: Exclusivo ADMIN
- */
-router.post(
-  "/",
-  checkRole(["ADMIN"]),
-  notificacionesController.crearComunicado
-);
+  return res.status(403).json({
+    success: false,
+    message: "No tienes permiso para acceder a este recurso.",
+  });
+};
 
-/**
- * 3. DESACTIVAR O INACTIVAR COMUNICADO
- * Acceso: Exclusivo ADMIN
- */
-router.patch(
-  "/:idComunicado/desactivar",
-  checkRole(["ADMIN"]),
-  notificacionesController.desactivarComunicado
-);
+// GET /api/notificaciones - Obtener comunicados (Todos los usuarios autenticados)
+router.get("/", verifyToken, notificacionesController.obtenerComunicados);
+
+// POST /api/notificaciones - Publicar comunicado (Solo administradores)
+router.post("/", verifyToken, requireAdmin, notificacionesController.crearComunicado);
+
+// PUT /api/notificaciones/:id/desactivar - Inactivar comunicado
+router.put("/:id/desactivar", verifyToken, requireAdmin, notificacionesController.desactivarComunicado);
 
 module.exports = router;

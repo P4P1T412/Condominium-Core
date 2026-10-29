@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    container_name: oracle_condominio
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: TuPasswordSegura123
+      APP_USER: condominio_app
+      APP_USER_PASSWORD: TuPasswordSegura123
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      # Docker montará tus scripts y los ejecutará automáticamente al crear el contenedor:
+      - ./database/ddl:/container-entrypoint-initdb.d
+
+volumes:
+  oracle_data:

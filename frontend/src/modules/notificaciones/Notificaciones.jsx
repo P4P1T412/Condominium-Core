@@ -23,7 +23,7 @@ export default function Notificaciones() {
     tipoDestino: "GLOBAL", // 'GLOBAL', 'CASA', 'INDIVIDUAL'
     idCasaDestino: "",
     idUsuarioDestino: "",
-    canalEnvio: "TODOS",  // 'APP', 'EMAIL', 'WHATSAPP', 'AMBOS', 'TODOS'
+    canalEnvio: "TODOS", // 'APP', 'EMAIL', 'WHATSAPP', 'AMBOS', 'TODOS'
   });
 
   useEffect(() => {
@@ -35,10 +35,12 @@ export default function Notificaciones() {
       setLoading(true);
       if (activeTab === "avisos") {
         const res = await api.get("/notificaciones");
-        setComunicados(res.data.data);
+        const lista = res.data?.data || res.data || [];
+        setComunicados(Array.isArray(lista) ? lista : []);
       } else {
         const res = await api.get("/quejas");
-        setQuejas(res.data.data);
+        const lista = res.data?.data || res.data || [];
+        setQuejas(Array.isArray(lista) ? lista : []);
       }
     } catch (err) {
       console.error("Error al cargar datos:", err);
@@ -56,18 +58,19 @@ export default function Notificaciones() {
         const payload = {
           titulo: formData.titulo,
           contenido: formData.contenido,
+          categoria: formData.categoria,
           idCasaDestino: formData.tipoDestino === "CASA" ? Number(formData.idCasaDestino) : null,
           idUsuarioDestino: formData.tipoDestino === "INDIVIDUAL" ? Number(formData.idUsuarioDestino) : null,
           canalEnvio: formData.canalEnvio,
         };
 
         const res = await api.post("/notificaciones", payload);
-        setMensajeAlert({ tipo: "exito", texto: res.data.message });
+        setMensajeAlert({ tipo: "exito", texto: res.data?.message || "Comunicado emitido correctamente." });
       } else {
         const payload = {
           asunto: formData.titulo,
           descripcion: formData.contenido,
-          idCasa: user.casaId,
+          idCasa: user?.casaId || user?.id_casa,
         };
 
         await api.post("/quejas", payload);
@@ -93,6 +96,16 @@ export default function Notificaciones() {
     }
   };
 
+  // Filtrado local por categoría para avisos
+  const comunicadosFiltrados = comunicados.filter((item) => {
+    if (filterCategory === "Todas") return true;
+    const catItem = item.CATEGORIA || item.categoria || "General";
+    return catItem.toLowerCase() === filterCategory.toLowerCase();
+  });
+
+  const rolUpper = String(user?.rol || user?.role || "").toUpperCase();
+  const esAdmin = rolUpper === "ADMIN" || rolUpper === "ADMINISTRADOR";
+
   return (
     <div style={styles.container}>
       {/* Encabezado Principal */}
@@ -108,7 +121,7 @@ export default function Notificaciones() {
             Actualizar lista
           </button>
           {/* Si es Residente puede crear Quejas, si es Admin puede publicar Comunicados */}
-          {(activeTab === "quejas" || user.rol === "ADMIN") && (
+          {(activeTab === "quejas" || esAdmin) && (
             <button style={styles.btnPrimary} onClick={() => setShowModal(true)}>
               {activeTab === "avisos" ? "+ Publicar Comunicado" : "+ Nueva Queja / Sugerencia"}
             </button>
@@ -159,80 +172,146 @@ export default function Notificaciones() {
             >
               <option value="Todas">Todas</option>
               <option value="Mantenimiento">Mantenimiento</option>
+              <option value="Seguridad">Seguridad</option>
+              <option value="Eventos">Eventos</option>
               <option value="Administración">Administración</option>
               <option value="General">General</option>
             </select>
           </div>
 
           {loading ? (
-            <p>Cargando avisos...</p>
+            <p style={{ color: "#64748B" }}>Cargando avisos...</p>
+          ) : comunicadosFiltrados.length === 0 ? (
+            <div
+              style={{
+                padding: "32px",
+                textAlign: "center",
+                backgroundColor: "#FFFFFF",
+                borderRadius: "10px",
+                border: "1px solid #E2E8F0",
+                color: "#64748B",
+              }}
+            >
+              No hay comunicados disponibles en esta categoría.
+            </div>
           ) : (
             <div style={styles.cardsGrid}>
-              {comunicados.map((item) => (
-                <div
-                  key={item.ID_COMUNICADO}
-                  style={{
-                    ...styles.card,
-                    borderLeft: `4px solid ${
-                      item.CANAL_ENVIO === "WHATSAPP"
-                        ? "#22C55E"
-                        : item.CANAL_ENVIO === "EMAIL"
-                        ? "#3B82F6"
-                        : "#EF4444"
-                    }`,
-                  }}
-                >
-                  <div style={styles.cardHeader}>
-                    <h3 style={styles.cardTitle}>{item.TITULO}</h3>
-                    <span style={styles.cardDate}>
-                      {new Date(item.FECHA_PUBLICACION).toLocaleDateString()}
-                    </span>
+              {comunicadosFiltrados.map((item, idx) => {
+                const canal = item.CANAL_ENVIO || item.canal_envio || "APP";
+                const titulo = item.TITULO || item.titulo;
+                const fecha = item.FECHA_PUBLICACION || item.fecha_publicacion || item.fecha;
+                const contenido = item.CONTENIDO || item.contenido;
+                const idCasaDest = item.ID_CASA_DESTINO || item.id_casa_destino;
+                const numCasa = item.NUMERO_CASA || item.numero_casa;
+                const idUserDest = item.ID_USUARIO_DESTINO || item.id_usuario_destino;
+
+                return (
+                  <div
+                    key={item.ID_COMUNICADO || item.id_comunicado || idx}
+                    style={{
+                      ...styles.card,
+                      borderLeft: `4px solid ${
+                        canal === "WHATSAPP"
+                          ? "#22C55E"
+                          : canal === "EMAIL"
+                          ? "#3B82F6"
+                          : canal === "AMBOS" || canal === "TODOS"
+                          ? "#8B5CF6"
+                          : "#1B4B82"
+                      }`,
+                    }}
+                  >
+                    <div style={styles.cardHeader}>
+                      <h3 style={styles.cardTitle}>{titulo}</h3>
+                      <span style={styles.cardDate}>
+                        {fecha ? new Date(fecha).toLocaleDateString() : ""}
+                      </span>
+                    </div>
+                    <p style={styles.cardContent}>{contenido}</p>
+                    <div style={styles.cardFooterSpace}>
+                      <span style={styles.categoryBadge}>Canal: {canal}</span>
+                      <span style={styles.destinatarioText}>
+                        {idCasaDest
+                          ? `Casa #${numCasa || idCasaDest}`
+                          : idUserDest
+                          ? `Aviso Individual`
+                          : "Global"}
+                      </span>
+                    </div>
                   </div>
-                  <p style={styles.cardContent}>{item.CONTENIDO}</p>
-                  <div style={styles.cardFooterSpace}>
-                    <span style={styles.categoryBadge}>Canal: {item.CANAL_ENVIO}</span>
-                    <span style={styles.destinatarioText}>
-                      {item.ID_CASA_DESTINO
-                        ? `Casa #${item.NUMERO_CASA || item.ID_CASA_DESTINO}`
-                        : item.ID_USUARIO_DESTINO
-                        ? `Aviso Individual`
-                        : "Global"}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
       ) : (
         /* PESTAÑA QUEJAS Y SUGERENCIAS */
-        <div style={styles.cardsGrid}>
-          {quejas.map((item) => (
-            <div key={item.ID_QUEJA} style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div>
-                  <h3 style={styles.cardTitle}>{item.ASUNTO}</h3>
-                  <span style={styles.cardSub}>Reportado por Casa #{item.NUMERO_CASA || item.ID_CASA}</span>
-                </div>
-                <span
-                  style={{
-                    ...styles.statusBadge,
-                    backgroundColor: item.ESTADO === "RESUELTA" ? "#DCFCE7" : "#FEF3C7",
-                    color: item.ESTADO === "RESUELTA" ? "#166534" : "#92400E",
-                  }}
-                >
-                  {item.ESTADO}
-                </span>
-              </div>
-              <p style={styles.cardContent}>{item.DESCRIPCION}</p>
-              <div style={styles.cardFooterSpace}>
-                <span style={styles.cardDate}>
-                  Fecha: {new Date(item.FECHA_CREACION).toLocaleDateString()}
-                </span>
-                <button style={styles.btnActionSmall}>Ver Respuesta</button>
-              </div>
+        <div>
+          {loading ? (
+            <p style={{ color: "#64748B" }}>Cargando solicitudes...</p>
+          ) : quejas.length === 0 ? (
+            <div
+              style={{
+                padding: "32px",
+                textAlign: "center",
+                backgroundColor: "#FFFFFF",
+                borderRadius: "10px",
+                border: "1px solid #E2E8F0",
+                color: "#64748B",
+              }}
+            >
+              No hay quejas o sugerencias registradas por el momento.
             </div>
-          ))}
+          ) : (
+            <div style={styles.cardsGrid}>
+              {quejas.map((item, idx) => {
+                const asunto = item.ASUNTO || item.asunto;
+                const numCasa = item.NUMERO_CASA || item.numero_casa || item.ID_CASA || item.id_casa;
+                const estado = item.ESTADO || item.estado || "PENDIENTE";
+                const descripcion = item.DESCRIPCION || item.descripcion;
+                const fecha = item.FECHA_CREACION || item.fecha_creacion;
+
+                return (
+                  <div key={item.ID_QUEJA || item.id_queja || idx} style={styles.card}>
+                    <div style={styles.cardHeader}>
+                      <div>
+                        <h3 style={styles.cardTitle}>{asunto}</h3>
+                        <span style={styles.cardSub}>
+                          Reportado por Casa #{numCasa || "General"}
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          ...styles.statusBadge,
+                          backgroundColor:
+                            estado === "RESUELTA" || estado === "ATENDIDO"
+                              ? "#DCFCE7"
+                              : estado === "EN_PROCESO"
+                              ? "#DBEAFE"
+                              : "#FEF3C7",
+                          color:
+                            estado === "RESUELTA" || estado === "ATENDIDO"
+                              ? "#166534"
+                              : estado === "EN_PROCESO"
+                              ? "#1E40AF"
+                              : "#92400E",
+                        }}
+                      >
+                        {estado}
+                      </span>
+                    </div>
+                    <p style={styles.cardContent}>{descripcion}</p>
+                    <div style={styles.cardFooterSpace}>
+                      <span style={styles.cardDate}>
+                        Fecha: {fecha ? new Date(fecha).toLocaleDateString() : ""}
+                      </span>
+                      <button style={styles.btnActionSmall}>Ver Respuesta</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -261,6 +340,21 @@ export default function Notificaciones() {
               {/* OPCIONES EXCLUSIVAS PARA COMUNICADOS (ROL ADMIN) */}
               {activeTab === "avisos" && (
                 <>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Categoría</label>
+                    <select
+                      value={formData.categoria}
+                      onChange={(e) => setFormData({ ...formData, categoria: e.target.value })}
+                      style={styles.input}
+                    >
+                      <option value="General">General</option>
+                      <option value="Mantenimiento">Mantenimiento</option>
+                      <option value="Seguridad">Seguridad</option>
+                      <option value="Eventos">Eventos</option>
+                      <option value="Administración">Administración</option>
+                    </select>
+                  </div>
+
                   <div style={styles.formGroup}>
                     <label style={styles.label}>Alcance del Destinatario</label>
                     <select

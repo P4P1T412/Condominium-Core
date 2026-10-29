@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog 
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog" 
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:n0="http://www.oracle.com/xml/ns/dbchangelog-ext" 
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog 
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+ <changeSet id="9414d30034f69831b01f330cb14d3e8e8a6ae501" author="(CONDOMINIO_APP)-Generated" failOnError="true"    runOnChange="false"  runAlways="false"  runInTransaction="false"  >
+  <n0:createOracleRefConstraint objectName="FK_COMUNICADO_USUARIO" objectType="REF_CONSTRAINT" ownerName="CONDOMINIO_APP"  replaceIfExists="false" >
+    <n0:source><![CDATA[ALTER TABLE "%USER_NAME%"."COMUNICADO" ADD CONSTRAINT "FK_COMUNICADO_USUARIO" FOREIGN KEY ("ID_USUARIO")
+	  REFERENCES "%USER_NAME%"."USUARIO" ("ID_USUARIO") ENABLE;]]></n0:source>
+      </n0:createOracleRefConstraint>
+ </changeSet>
+</databaseChangeLog>

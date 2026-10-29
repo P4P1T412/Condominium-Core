@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog 
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog" 
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:n0="http://www.oracle.com/xml/ns/dbchangelog-ext" 
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog 
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+ <changeSet id="c6f9d769933e0553680fddfe4da4f7fb8fd32961" author="(CONDOMINIO_APP)-Generated" failOnError="true"    runOnChange="false"  runAlways="false"  runInTransaction="false"  >
+  <n0:createSxmlObject objectName="VW_CASAS_MOROSAS" objectType="VIEW" ownerName="CONDOMINIO_APP"  replaceIfExists="false" >
+    <n0:source><![CDATA[
+  <VIEW xmlns="http://xmlns.oracle.com/ku" version="1.0">
+   <SCHEMA>%USER_NAME%</SCHEMA>
+   <NAME>VW_CASAS_MOROSAS</NAME>
+   <DEFAULT_COLLATION>USING_NLS_COMP</DEFAULT_COLLATION>
+   <COL_LIST>
+      <COL_LIST_ITEM>
+         <NAME>ID_CASA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>NUMERO_CASA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>BLOQUE</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>RESPONSABLE</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>TELEFONO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>CORREO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>CUOTAS_PENDIENTES</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>TOTAL_ADEUDADO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>FECHA_VENCIMIENTO_MAS_ANTIGUA</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+      <COL_LIST_ITEM>
+         <NAME>DIAS_MORA_MAXIMO</NAME>
+         <ANNOTATION_LIST></ANNOTATION_LIST>
+      </COL_LIST_ITEM>
+   </COL_LIST>
+   <ANNOTATION_LIST></ANNOTATION_LIST>
+   <SUBQUERY>SELECT 
+    c.id_casa,
+    c.numero_casa,
+    c.bloque,
+    p.nombres || ' ' || p.apellidos AS responsable,
+    p.telefono,
+    p.correo,
+    COUNT(cu.id_cuota) AS cuotas_pendientes,
+    SUM(cu.monto_total - NVL(pagos.total_abonado, 0)) AS total_adeudado,
+    MIN(cu.fecha_vencimiento) AS fecha_vencimiento_mas_antigua,
+    TRUNC(SYSDATE - MIN(cu.fecha_vencimiento)) AS dias_mora_maximo
+FROM CASA c
+JOIN PERSONA p ON c.id_propietario = p.id_persona
+JOIN CUOTA cu ON c.id_casa = cu.id_casa
+LEFT JOIN (
+    SELECT id_cuota, SUM(monto_pagado) AS total_abonado
+    FROM PAGO
+    WHERE estado = 'VALIDO'
+    GROUP BY id_cuota
+) pagos ON cu.id_cuota = pagos.id_cuota
+WHERE cu.estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDA')
+  AND cu.fecha_vencimiento &#60; SYSDATE
+GROUP BY 
+    c.id_casa, c.numero_casa, c.bloque, 
+    p.nombres, p.apellidos, p.telefono, p.correo</SUBQUERY>
+</VIEW>]]></n0:source>
+      </n0:createSxmlObject>
+ </changeSet>
+</databaseChangeLog>

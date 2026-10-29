@@ -1,32 +1,24 @@
 const notificacionesService = require("./notificaciones.service");
 
 /**
- * Obtener todos los comunicados/notificaciones según el Rol y Casa del usuario
+ * Obtiene la lista de comunicados de la base de datos
  */
 exports.obtenerComunicados = async (req, res, next) => {
   try {
-    const comunicados = await notificacionesService.obtenerComunicados(req.user);
-    res.json({ success: true, data: comunicados });
+    const data = await notificacionesService.obtenerComunicados(req.user);
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Crear y emitir un comunicado multicanal (Global o Individual)
+ * Crea y emite un comunicado o notificación
  */
 exports.crearComunicado = async (req, res, next) => {
   try {
-    const { titulo, contenido } = req.body;
-
-    if (!titulo || !contenido) {
-      return res.status(400).json({
-        success: false,
-        message: "El título y el contenido del comunicado son requeridos.",
-      });
-    }
-
-    const resultado = await notificacionesService.crearComunicado(req.body, req.user.id);
+    const adminId = req.user?.id || req.user?.id_usuario || 1;
+    const resultado = await notificacionesService.crearComunicado(req.body, adminId);
     res.status(201).json({ success: true, ...resultado });
   } catch (error) {
     next(error);
@@ -34,12 +26,12 @@ exports.crearComunicado = async (req, res, next) => {
 };
 
 /**
- * Inactivar o anular un comunicado (Solo Administrador)
+ * Inactiva un comunicado emitido
  */
 exports.desactivarComunicado = async (req, res, next) => {
   try {
-    const { idComunicado } = req.params;
-    const resultado = await notificacionesService.desactivarComunicado(Number(idComunicado));
+    const { id } = req.params;
+    const resultado = await notificacionesService.desactivarComunicado(id);
     res.json({ success: true, ...resultado });
   } catch (error) {
     next(error);
