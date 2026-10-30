@@ -53,11 +53,17 @@ async function authenticateUser(usernameOrEmail, password) {
       p.nombres,
       p.apellidos,
       p.correo,
-      res.id_casa
+      (
+        SELECT r.id_casa
+          FROM RESIDENTE r
+         WHERE r.id_persona = p.id_persona
+           AND r.estado = 'ACTIVO'
+         ORDER BY r.es_principal DESC, r.fecha_ingreso DESC
+         FETCH FIRST 1 ROWS ONLY
+      ) AS id_casa
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
-    LEFT JOIN RESIDENTE res ON p.id_persona = res.id_persona
     WHERE (LOWER(u.nombre_usuario) = LOWER(:identifier) OR LOWER(p.correo) = LOWER(:identifier))
   `;
 
@@ -151,11 +157,17 @@ async function getUserProfileById(userId) {
       p.correo,
       p.telefono,
       p.dpi,
-      res.id_casa
+      (
+        SELECT r.id_casa
+          FROM RESIDENTE r
+         WHERE r.id_persona = p.id_persona
+           AND r.estado = 'ACTIVO'
+         ORDER BY r.es_principal DESC, r.fecha_ingreso DESC
+         FETCH FIRST 1 ROWS ONLY
+      ) AS id_casa
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
-    LEFT JOIN RESIDENTE res ON p.id_persona = res.id_persona
     WHERE u.id_usuario = :userId AND u.estado = 'ACTIVO'
   `;
 

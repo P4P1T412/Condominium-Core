@@ -1,5 +1,6 @@
 const xlsx = require("xlsx");
 const crypto = require("crypto");
+const oracledb = require("oracledb");
 const db = require("../../config/db.js");
 
 /**
@@ -351,6 +352,180 @@ const rechazarVisita = async (idVisita) => {
   return { message: "Solicitud de visita rechazada." };
 };
 
+/**
+ * Registra un proveedor o servicio técnico externo y genera su pase de acceso.
+ */
+const crearServicioExterno = async (datos = {}, userId) => {
+  const nombreProveedor =
+    datos.nombreProveedor || datos.nombre_proveedor || datos.proveedor;
+  const tipoServicio =
+    datos.tipoServicio || datos.tipo_servicio || datos.tipo;
+  const correoProveedor =
+    datos.correoProveedor || datos.correo_proveedor || datos.correo;
+  const telefonoProveedor =
+    datos.telefonoProveedor || datos.telefono_proveedor || datos.telefono || null;
+  const fechaInicio = datos.fechaInicio || datos.fecha_inicio;
+  const fechaFin = datos.fechaFin || datos.fecha_fin;
+  const diasPermitidos =
+    datos.diasPermitidos || datos.dias_permitidos || null;
+
+  if (!nombreProveedor || !tipoServicio || !correoProveedor || !fechaInicio || !fechaFin) {
+    const error = new Error(
+      "Nombre del proveedor, tipo de servicio, correo y fechas de inicio/fin son obligatorios."
+    );
+    error.statusCode = 400;
+    error.code = "SERVICIO_DATOS_INCOMPLETOS";
+    throw error;
+  }
+
+  const inicio = new Date(fechaInicio);
+  const fin = new Date(fechaFin);
+
+  if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) {
+    const error = new Error("Las fechas deben tener un formato válido (YYYY-MM-DD).");
+    error.statusCode = 400;
+    error.code = "SERVICIO_FECHAS_INVALIDAS";
+    throw error;
+  }
+
+  if (fin < inicio) {
+    const error = new Error("La fecha de fin no puede ser anterior a la fecha de inicio.");
+    error.statusCode = 400;
+    error.code = "SERVICIO_FECHAS_INVALIDAS";
+    throw error;
+  }
+
+  const tokenAcceso = crypto.randomUUID();
+
+  const sqlInsert = `
+    INSERT INTO SERVICIO_EXTERNO (
+      nombre_proveedor, tipo_servicio, correo_proveedor, telefono_proveedor,
+      token_acceso, fecha_inicio, fecha_fin, dias_permitidos, creado_por, estado
+    ) VALUES (
+      :nombreProveedor, :tipoServicio, :correoProveedor, :telefonoProveedor,
+      :tokenAcceso, TO_DATE(:fechaInicio, 'YYYY-MM-DD'), TO_DATE(:fechaFin, 'YYYY-MM-DD'),
+      :diasPermitidos, :creadoPor, 'ACTIVO'
+    )
+    RETURNING id_servicio INTO :idServicioOut`;
+
+  const result = await db.executeQuery(
+    sqlInsert,
+    {
+      nombreProveedor: String(nombreProveedor).trim(),
+      tipoServicio: String(tipoServicio).trim(),
+      correoProveedor: String(correoProveedor).trim(),
+      telefonoProveedor: telefonoProveedor ? String(telefonoProveedor).trim() : null,
+      tokenAcceso,
+      fechaInicio: String(fechaInicio),
+      fechaFin: String(fechaFin),
+      diasPermitidos: diasPermitidos ? String(diasPermitidos).trim() : null,
+      creadoPor: Number(userId || 1),
+      idServicioOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+    },
+    { autoCommit: true }
+  );
+
+  const idServicio = result.outBinds?.idServicioOut?.[0] ?? null;
+
+  return {
+    idServicio,
+    id_servicio: idServicio,
+    tokenAcceso,
+    token_acceso: tokenAcceso,
+    message: "Servicio externo registrado exitosamente.",
+  };
+};
+
+/**
+ * Rechaza un evento masivo completo y cancela las visitas asociadas.
+ */
+const rechazarEvento = async (idEvento, motivoRechazo) => {
+  const motivo = motivoRechazo
+    ? String(motivoRechazo).trim()
+    : "Evento rechazado por la administración.";
+
+  const sqlEvento = `
+    UPDATE EVENTO_VISITA
+       SET estado_aprobacion = 'RECHAZADO',
+           motivo_rechazo = :motivo,
+           fecha_aprobacion = SYSTIMESTAMP
+     WHERE id_evento = :idEvento`;
+
+  const result = await db.executeQuery(
+    sqlEvento,
+    { motivo, idEvento: Number(idEvento) },
+    { autoCommit: true }
+  );
+
+  if (!result.rowsAffected) {
+    const error = new Error("El evento indicado no existe.");
+    error.statusCode = 404;
+    error.code = "EVENTO_NOT_FOUND";
+    throw error;
+  }
+
+  await db.executeQuery(
+    `UPDATE VISITA
+        SET estado = 'CANCELADA'
+      WHERE id_evento = :idEvento
+        AND estado IN ('PENDIENTE', 'PENDIENTE_APROBACION', 'AUTORIZADA')`,
+    { idEvento: Number(idEvento) },
+    { autoCommit: true }
+  );
+
+  return { message: "Evento rechazado y visitas asociadas canceladas." };
+};
+
+/**
+ * Registro masivo express en Garita: marca como DENTRO a todos los invitados
+ * autorizados del evento y sella su hora de entrada.
+ */
+const registrarIngresoMasivoEvento = async (idEvento, user) => {
+  const eventoId = Number(idEvento);
+
+  const resEvento = await db.executeQuery(
+    `SELECT id_evento, estado_aprobacion FROM EVENTO_VISITA WHERE id_evento = :idEvento`,
+    { idEvento: eventoId }
+  );
+  const eventos = resEvento.rows || resEvento.data || resEvento || [];
+
+  if (!eventos.length) {
+    const error = new Error("El evento indicado no existe.");
+    error.statusCode = 404;
+    error.code = "EVENTO_NOT_FOUND";
+    throw error;
+  }
+
+  const estadoEvento = String(
+    eventos[0].ESTADO_APROBACION ?? eventos[0].estado_aprobacion ?? ""
+  ).toUpperCase();
+
+  if (!["APROBADO", "ENVIADO_GARITA"].includes(estadoEvento)) {
+    const error = new Error("El evento aún no está autorizado para el ingreso en garita.");
+    error.statusCode = 409;
+    error.code = "EVENTO_NO_AUTORIZADO";
+    throw error;
+  }
+
+  const result = await db.executeQuery(
+    `UPDATE VISITA
+        SET estado = 'DENTRO',
+            fecha_entrada = NVL(fecha_entrada, SYSDATE)
+      WHERE id_evento = :idEvento
+        AND estado = 'AUTORIZADA'`,
+    { idEvento: eventoId },
+    { autoCommit: true }
+  );
+
+  const totalIngresados = result.rowsAffected || 0;
+
+  return {
+    totalIngresados,
+    total_ingresados: totalIngresados,
+    message: `Ingreso masivo registrado para ${totalIngresados} invitado(s).`,
+  };
+};
+
 module.exports = {
   procesarEventoMasivo,
   cargarEventoExcel: procesarEventoMasivo,
@@ -361,4 +536,7 @@ module.exports = {
   aprobarEvento,
   enviarEventoAGarita,
   registrarAccesoGarita,
+  crearServicioExterno,
+  rechazarEvento,
+  registrarIngresoMasivoEvento,
 };

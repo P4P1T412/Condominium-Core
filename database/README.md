@@ -29,6 +29,11 @@ DBeaver (u otro cliente SQL de tu preferencia).
    tablas posteriores dependen de las anteriores por sus llaves foráneas. Luego corre
    los de `seeds/` para los roles base, y los de `views/` si tu módulo los necesita.
 
+> **¿Ya tenías tu base creada?** No vuelvas a correr `01_schema.sql` (fallará porque
+> las tablas ya existen). Aplica únicamente las migraciones pendientes de `ddl/`
+> (por ejemplo `05_migration_visitas_comunicados.sql`). Estos scripts son
+> idempotentes: agregan solo lo que falta y no borran datos.
+
 ## Comandos útiles del contenedor
 
 ```bash
