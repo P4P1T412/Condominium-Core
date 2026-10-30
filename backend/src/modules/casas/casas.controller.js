@@ -160,10 +160,76 @@ async function createPersona(req, res, next) {
   }
 }
 
+/**
+ * Procesa la carga masiva de viviendas desde un archivo Excel en memoria.
+ * Responde 200 con el resumen detallado o 400 si el archivo es inválido/vacío.
+ */
+async function importarCasas(req, res, next) {
+  try {
+    const file =
+      req.file ||
+      (req.files && req.files.archivo && req.files.archivo[0]) ||
+      (req.files && req.files.archivoExcel && req.files.archivoExcel[0]) ||
+      null;
+
+    if (!file || !file.buffer || file.buffer.length === 0) {
+      return res.status(400).json({
+        success: false,
+        code: "FILE_REQUIRED",
+        message: "No se adjuntó ningún archivo Excel o el archivo está vacío.",
+      });
+    }
+
+    const resumen = await casasService.importarCasasDesdeExcel(file.buffer, {
+      userId: req.user ? req.user.userId : null,
+      idPropietario: req.body ? req.body.idPropietario : null,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Carga masiva finalizada: ${resumen.creados} casa(s) creada(s), ${resumen.omitidos} omitida(s) y ${resumen.errores.length} con error.`,
+      data: resumen,
+    });
+  } catch (error) {
+    if (error && error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        code: error.code || "INVALID_EXCEL_FILE",
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+}
+
+/**
+ * Descarga la plantilla oficial .xlsx para la carga masiva de casas.
+ */
+async function descargarPlantilla(req, res, next) {
+  try {
+    const buffer = casasService.generarPlantillaExcel();
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="plantilla-carga-casas.xlsx"'
+    );
+
+    return res.status(200).send(buffer);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getCasas,
   getCasa,
   createCasa,
+  importarCasas,
+  descargarPlantilla,
   addResidente,
   removeResidente,
   getPersonas,

@@ -8,7 +8,8 @@
  * =============================================================================
  */
 
-const { executeQuery } = require("../../config/db");
+const xlsx = require("xlsx");
+const { executeQuery, withTransaction } = require("../../config/db");
 
 /**
  * Obtiene el listado consolidado de casas con información de propietarios y residentes.
@@ -532,10 +533,544 @@ async function createPersona(personaData) {
   };
 }
 
+/**
+ * =============================================================================
+ * CARGA MASIVA DE CASAS DESDE EXCEL
+ * =============================================================================
+ * Lee una hoja de cálculo (.xlsx / .xls), normaliza los encabezados y registra
+ * las viviendas válidas dentro de una única transacción de Oracle. Las filas
+ * duplicadas se omiten y las filas defectuosas se reportan sin abortar el lote.
+ * =============================================================================
+ */
+
+const MAX_FILAS_IMPORTACION = 5000;
+const ESTADOS_CASA_VALIDOS = new Set(["DISPONIBLE", "OCUPADA", "INACTIVA"]);
+
+// Variaciones aceptadas para cada columna de la plantilla
+const ALIAS_COLUMNAS = {
+  numero: [
+    "numero",
+    "numero casa",
+    "numero de casa",
+    "numerocasa",
+    "numero vivienda",
+    "no",
+    "no casa",
+    "nro",
+    "nro casa",
+    "num",
+    "num casa",
+    "casa",
+    "codigo",
+    "codigo casa",
+    "nomenclatura",
+  ],
+  bloque: ["bloque", "manzana", "sector", "bloque manzana", "bloque o sector", "bloque sector"],
+  direccion: ["direccion", "direccion detallada", "dir", "ubicacion"],
+  tipo: ["tipo", "tipo vivienda", "tipo de vivienda"],
+  estado: ["estado", "estado vivienda", "estado de la vivienda"],
+  observaciones: ["observaciones", "observacion", "notas", "comentario", "comentarios"],
+  idPropietario: ["id propietario", "idpropietario", "id de propietario", "propietario id"],
+  dpiPropietario: [
+    "dpi",
+    "dpi propietario",
+    "identificacion propietario",
+    "identificacion del propietario",
+    "cui propietario",
+  ],
+};
+
+/**
+ * Normaliza encabezados: quita acentos, signos y espacios repetidos.
+ */
+function normalizarTexto(valor) {
+  return String(valor ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+const MAPA_COLUMNAS = (() => {
+  const mapa = new Map();
+  Object.entries(ALIAS_COLUMNAS).forEach(([canonica, alias]) => {
+    mapa.set(canonica, canonica);
+    alias.forEach((nombre) => mapa.set(normalizarTexto(nombre), canonica));
+  });
+  return mapa;
+})();
+
+/**
+ * Convierte una fila cruda de Excel en un objeto con claves canónicas.
+ */
+function normalizarFila(fila) {
+  const normalizada = {};
+
+  Object.keys(fila).forEach((columna) => {
+    const canonica = MAPA_COLUMNAS.get(normalizarTexto(columna));
+    if (!canonica) return;
+
+    const valorActual = normalizada[canonica];
+    if (valorActual !== undefined && valorTexto(valorActual) !== "") return;
+
+    normalizada[canonica] = fila[columna];
+  });
+
+  return normalizada;
+}
+
+function valorTexto(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor).replace(/\s+/g, " ").trim();
+}
+
+function normalizarEstado(valor) {
+  const estado = normalizarTexto(valor).toUpperCase();
+  return ESTADOS_CASA_VALIDOS.has(estado) ? estado : "DISPONIBLE";
+}
+
+function claveNumero(numero) {
+  return valorTexto(numero).toUpperCase();
+}
+
+function claveBloque(bloque) {
+  return valorTexto(bloque).toUpperCase();
+}
+
+function clavePar(numero, bloque) {
+  return `${claveNumero(numero)}||${claveBloque(bloque)}`;
+}
+
+function crearErrorValidacion(mensaje) {
+  const error = new Error(mensaje);
+  error.statusCode = 400;
+  error.code = "INVALID_EXCEL_FILE";
+  return error;
+}
+
+/**
+ * Traduce los errores más frecuentes de Oracle a mensajes comprensibles.
+ */
+function motivoErrorOracle(error) {
+  const mensaje = (error && error.message) || "";
+
+  if (mensaje.includes("ORA-00001")) {
+    return "Ya existe una casa con ese número en el sistema.";
+  }
+  if (mensaje.includes("ORA-01400")) {
+    return "Faltan datos obligatorios para registrar la casa.";
+  }
+  if (mensaje.includes("ORA-02291")) {
+    return "El propietario asociado no existe en el padrón de personas.";
+  }
+  if (mensaje.includes("ORA-12899")) {
+    return "Uno de los valores excede la longitud permitida por la base de datos.";
+  }
+
+  return mensaje.replace(/\s+/g, " ").slice(0, 250) || "Error desconocido al insertar la fila.";
+}
+
+/**
+ * Consulta las columnas reales de CASA para soportar esquemas con o sin
+ * tipo_vivienda / observaciones / notas sin romper la sentencia INSERT.
+ */
+async function obtenerColumnasCasa(connection) {
+  try {
+    const result = await connection.execute(
+      `SELECT column_name FROM user_tab_columns WHERE table_name = 'CASA'`
+    );
+    const columnas = new Set(
+      (result.rows || []).map((row) =>
+        String(row.COLUMN_NAME ?? row.column_name ?? "").toLowerCase()
+      )
+    );
+    if (columnas.size > 0) return columnas;
+  } catch (error) {
+    console.warn("No se pudieron consultar las columnas de CASA:", error.message);
+  }
+
+  return new Set(["numero_casa", "bloque", "direccion", "estado", "id_propietario", "creado_por"]);
+}
+
+function construirInsertCasa(columnasCasa, userId) {
+  const campos = [
+    { columna: "numero_casa", bind: "numeroCasa" },
+    { columna: "bloque", bind: "bloque" },
+    { columna: "direccion", bind: "direccion" },
+    { columna: "estado", bind: "estado" },
+  ];
+
+  if (columnasCasa.has("id_propietario")) {
+    campos.push({ columna: "id_propietario", bind: "idPropietario" });
+  }
+  if (columnasCasa.has("creado_por") && userId) {
+    campos.push({ columna: "creado_por", bind: "userId" });
+  }
+  if (columnasCasa.has("tipo_vivienda")) {
+    campos.push({ columna: "tipo_vivienda", bind: "tipoVivienda" });
+  }
+  if (columnasCasa.has("observaciones")) {
+    campos.push({ columna: "observaciones", bind: "observaciones" });
+  } else if (columnasCasa.has("notas")) {
+    campos.push({ columna: "notas", bind: "observaciones" });
+  }
+
+  const sql = `
+    INSERT INTO CASA (${campos.map((campo) => campo.columna).join(", ")})
+    VALUES (${campos.map((campo) => `:${campo.bind}`).join(", ")})
+  `;
+
+  return { sql, campos };
+}
+
+async function consultarPersonaPorId(connection, idPersona) {
+  const id = Number(idPersona);
+  if (!Number.isFinite(id)) return null;
+
+  const result = await connection.execute(
+    `SELECT id_persona FROM PERSONA WHERE id_persona = :idPersona`,
+    { idPersona: id }
+  );
+  const rows = result.rows || [];
+
+  if (rows.length === 0) return null;
+  return Number(rows[0].ID_PERSONA ?? rows[0].id_persona);
+}
+
+async function consultarPersonaPorDpi(connection, identificacion) {
+  const valor = valorTexto(identificacion);
+  if (!valor) return null;
+
+  const result = await connection.execute(
+    `SELECT id_persona
+     FROM PERSONA
+     WHERE (dpi = :identificacion OR identificacion_alternativa = :identificacion)
+       AND ROWNUM = 1`,
+    { identificacion: valor }
+  );
+  const rows = result.rows || [];
+
+  if (rows.length === 0) return null;
+  return Number(rows[0].ID_PERSONA ?? rows[0].id_persona);
+}
+
+/**
+ * Obtiene el propietario que se asignará a las casas que no traigan uno.
+ * Si no se indicó un propietario, reutiliza/crea una persona "pendiente de
+ * asignación" para satisfacer la restricción NOT NULL de CASA.id_propietario.
+ */
+async function obtenerPropietarioPorDefecto(connection, idPropietarioSolicitado) {
+  if (idPropietarioSolicitado) {
+    const idExistente = await consultarPersonaPorId(connection, idPropietarioSolicitado);
+    if (!idExistente) {
+      throw crearErrorValidacion("El propietario seleccionado no existe en el padrón de personas.");
+    }
+    return idExistente;
+  }
+
+  const existente = await connection.execute(
+    `SELECT id_persona
+     FROM PERSONA
+     WHERE UPPER(identificacion_alternativa) = 'SIN-PROPIETARIO'
+       AND ROWNUM = 1`
+  );
+  const rowsExistentes = existente.rows || [];
+  if (rowsExistentes.length > 0) {
+    return Number(rowsExistentes[0].ID_PERSONA ?? rowsExistentes[0].id_persona);
+  }
+
+  const oracledb = require("oracledb");
+
+  try {
+    const insercion = await connection.execute(
+      `INSERT INTO PERSONA (nombres, apellidos, identificacion_alternativa)
+       VALUES ('PROPIETARIO', 'PENDIENTE ASIGNACION', 'SIN-PROPIETARIO')
+       RETURNING id_persona INTO :idPersonaOut`,
+      { idPersonaOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER } }
+    );
+    return Number(insercion.outBinds.idPersonaOut[0]);
+  } catch (error) {
+    // Si otra carga simultánea creó la persona, se reutiliza la existente.
+    if ((error.message || "").includes("ORA-00001")) {
+      const reintento = await connection.execute(
+        `SELECT id_persona
+         FROM PERSONA
+         WHERE UPPER(identificacion_alternativa) = 'SIN-PROPIETARIO'
+           AND ROWNUM = 1`
+      );
+      const rowsReintento = reintento.rows || [];
+      if (rowsReintento.length > 0) {
+        return Number(rowsReintento[0].ID_PERSONA ?? rowsReintento[0].id_persona);
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Importa viviendas desde un archivo Excel en memoria.
+ *
+ * @param {Buffer} fileBuffer Contenido del archivo .xlsx / .xls.
+ * @param {object} options Opciones de importación (userId, idPropietario).
+ * @returns {Promise<object>} Resumen con totalProcesados, creados, omitidos y errores.
+ */
+async function importarCasasDesdeExcel(fileBuffer, options = {}) {
+  if (!fileBuffer || !Buffer.isBuffer(fileBuffer) || fileBuffer.length === 0) {
+    throw crearErrorValidacion("El archivo Excel está vacío o no se recibió correctamente.");
+  }
+
+  let workbook;
+  try {
+    workbook = xlsx.read(fileBuffer, { type: "buffer" });
+  } catch (error) {
+    throw crearErrorValidacion("El archivo no es un Excel válido o está dañado.");
+  }
+
+  const sheetName = workbook.SheetNames && workbook.SheetNames[0];
+  if (!sheetName || !workbook.Sheets[sheetName]) {
+    throw crearErrorValidacion("El archivo Excel no contiene hojas con datos.");
+  }
+
+  let filasCrudas;
+  try {
+    filasCrudas = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      defval: "",
+      raw: false,
+    });
+  } catch (error) {
+    throw crearErrorValidacion("No se pudo leer la hoja del archivo Excel.");
+  }
+
+  if (!Array.isArray(filasCrudas) || filasCrudas.length === 0) {
+    throw crearErrorValidacion("El archivo Excel no contiene filas con datos.");
+  }
+
+  if (filasCrudas.length > MAX_FILAS_IMPORTACION) {
+    throw crearErrorValidacion(
+      `El archivo supera el límite de ${MAX_FILAS_IMPORTACION} filas permitido por carga.`
+    );
+  }
+
+  const columnasReconocidas = new Set(
+    Object.keys(filasCrudas[0] || {})
+      .map((columna) => MAPA_COLUMNAS.get(normalizarTexto(columna)))
+      .filter(Boolean)
+  );
+
+  if (!columnasReconocidas.has("numero")) {
+    throw crearErrorValidacion(
+      'No se encontró la columna "Numero" en el archivo. Verifique la estructura de la plantilla.'
+    );
+  }
+
+  const userId = options.userId ? Number(options.userId) : null;
+  const idPropietarioSolicitado = options.idPropietario ? Number(options.idPropietario) : null;
+
+  return withTransaction(async (connection) => {
+    const columnasCasa = await obtenerColumnasCasa(connection);
+    const { sql: insertSql, campos } = construirInsertCasa(columnasCasa, userId);
+
+    // 1. Índices de duplicados ya persistidos en Oracle
+    const existentes = await connection.execute(`SELECT numero_casa, bloque FROM CASA`);
+    const paresExistentes = new Set();
+    const numerosExistentes = new Set();
+
+    (existentes.rows || []).forEach((row) => {
+      const numero = row.NUMERO_CASA ?? row.numero_casa;
+      const bloque = row.BLOQUE ?? row.bloque;
+      paresExistentes.add(clavePar(numero, bloque));
+      numerosExistentes.add(claveNumero(numero));
+    });
+
+    const errores = [];
+    const omitidosDetalle = [];
+    const candidatas = [];
+    const paresReservados = new Set();
+    const numerosReservados = new Set();
+    let omitidos = 0;
+
+    // 2. Validación y detección de duplicados (contra BD y dentro del archivo)
+    filasCrudas.forEach((filaCruda, indice) => {
+      const numeroFila = indice + 2; // +1 por encabezado, +1 para base 1
+      const fila = normalizarFila(filaCruda);
+
+      const numero = valorTexto(fila.numero);
+      const bloque = valorTexto(fila.bloque) || "SIN BLOQUE";
+
+      if (!numero) {
+        errores.push({ fila: numeroFila, motivo: "Falta el número de casa." });
+        return;
+      }
+
+      const numeroClave = claveNumero(numero);
+      const parClave = clavePar(numero, bloque);
+      const duplicadoEnPar = paresExistentes.has(parClave) || paresReservados.has(parClave);
+
+      if (
+        duplicadoEnPar ||
+        numerosExistentes.has(numeroClave) ||
+        numerosReservados.has(numeroClave)
+      ) {
+        omitidos += 1;
+        omitidosDetalle.push({
+          fila: numeroFila,
+          numero,
+          bloque,
+          motivo: duplicadoEnPar
+            ? "Duplicada: ya existe una casa con el mismo número y bloque."
+            : "Duplicada: el número de casa ya está registrado en otro bloque.",
+        });
+        return;
+      }
+
+      paresReservados.add(parClave);
+      numerosReservados.add(numeroClave);
+
+      candidatas.push({
+        fila: numeroFila,
+        numero,
+        bloque,
+        direccion: valorTexto(fila.direccion) || `Casa ${numero}, ${bloque}`,
+        estado: normalizarEstado(fila.estado),
+        tipoVivienda: valorTexto(fila.tipo) || null,
+        observaciones: valorTexto(fila.observaciones) || null,
+        idPropietarioFila: valorTexto(fila.idPropietario) || null,
+        dpiPropietarioFila: valorTexto(fila.dpiPropietario) || null,
+      });
+    });
+
+    // 3. Propietario por defecto (solo si alguna fila válida no trae uno)
+    let propietarioDefecto = null;
+    const requierePropietarioDefecto = candidatas.some(
+      (fila) => !fila.idPropietarioFila && !fila.dpiPropietarioFila
+    );
+
+    if (requierePropietarioDefecto) {
+      propietarioDefecto = await obtenerPropietarioPorDefecto(
+        connection,
+        idPropietarioSolicitado
+      );
+    }
+
+    // 4. Inserción tolerante a errores fila por fila dentro de la transacción
+    let creados = 0;
+    const cachePropietarios = new Map();
+
+    for (const fila of candidatas) {
+      try {
+        let idPropietario = propietarioDefecto;
+
+        if (fila.idPropietarioFila) {
+          const claveCache = `ID:${fila.idPropietarioFila}`;
+          if (!cachePropietarios.has(claveCache)) {
+            cachePropietarios.set(
+              claveCache,
+              await consultarPersonaPorId(connection, fila.idPropietarioFila)
+            );
+          }
+          idPropietario = cachePropietarios.get(claveCache);
+        } else if (fila.dpiPropietarioFila) {
+          const claveCache = `DPI:${fila.dpiPropietarioFila}`;
+          if (!cachePropietarios.has(claveCache)) {
+            cachePropietarios.set(
+              claveCache,
+              await consultarPersonaPorDpi(connection, fila.dpiPropietarioFila)
+            );
+          }
+          idPropietario = cachePropietarios.get(claveCache);
+        }
+
+        if (!idPropietario) {
+          errores.push({
+            fila: fila.fila,
+            motivo: "El propietario indicado no existe en el padrón de personas.",
+          });
+          continue;
+        }
+
+        const valores = {
+          numeroCasa: fila.numero,
+          bloque: fila.bloque.toUpperCase(),
+          direccion: fila.direccion,
+          estado: fila.estado,
+          idPropietario,
+          userId,
+          tipoVivienda: fila.tipoVivienda,
+          observaciones: fila.observaciones,
+        };
+
+        const binds = {};
+        campos.forEach((campo) => {
+          binds[campo.bind] = valores[campo.bind] ?? null;
+        });
+
+        await connection.execute(insertSql, binds);
+        creados += 1;
+      } catch (error) {
+        errores.push({ fila: fila.fila, motivo: motivoErrorOracle(error) });
+      }
+    }
+
+    return {
+      totalProcesados: filasCrudas.length,
+      creados,
+      omitidos,
+      errores,
+      omitidosDetalle,
+    };
+  });
+}
+
+/**
+ * Genera la plantilla oficial de carga masiva en formato .xlsx.
+ *
+ * @returns {Buffer} Libro de Excel con encabezados y filas de ejemplo.
+ */
+function generarPlantillaExcel() {
+  const filas = [
+    {
+      Numero: "A-101",
+      Bloque: "BLOQUE A",
+      Direccion: "Sector Norte Calle Principal Casa 1",
+      Tipo: "CASA",
+      Estado: "DISPONIBLE",
+      Observaciones: "Ejemplo: elimine esta fila antes de cargar",
+    },
+    {
+      Numero: "A-102",
+      Bloque: "BLOQUE A",
+      Direccion: "Sector Norte Calle Principal Casa 2",
+      Tipo: "CASA",
+      Estado: "DISPONIBLE",
+      Observaciones: "",
+    },
+  ];
+
+  const hoja = xlsx.utils.json_to_sheet(filas, {
+    header: ["Numero", "Bloque", "Direccion", "Tipo", "Estado", "Observaciones"],
+  });
+  hoja["!cols"] = [
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 40 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 40 },
+  ];
+
+  const libro = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(libro, hoja, "Casas");
+
+  return xlsx.write(libro, { type: "buffer", bookType: "xlsx" });
+}
+
 module.exports = {
   getAllCasas,
   getCasaById,
   createCasa,
+  importarCasasDesdeExcel,
+  generarPlantillaExcel,
   addResidenteToCasa,
   removeResidenteFromCasa,
   getPersonas,

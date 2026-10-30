@@ -70,6 +70,45 @@ async function executeQuery(sql, binds = {}, options = {}) {
 }
 
 /**
+ * Ejecuta un conjunto de operaciones dentro de una única transacción de Oracle.
+ * El callback recibe la conexión para poder ejecutar varias sentencias antes
+ * de confirmar. Si el callback lanza un error se revierte todo el lote.
+ *
+ * @param {(connection: import("oracledb").Connection) => Promise<any>} callback
+ * @returns {Promise<any>} Resultado devuelto por el callback.
+ */
+async function withTransaction(callback) {
+  if (!pool) {
+    throw new Error("ORA-POOL-NOT-INIT: El pool de conexiones no está listo.");
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const result = await callback(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Error al hacer rollback de la transacción:", rollbackError.message);
+      }
+    }
+    throw error;
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (closeError) {
+        console.error("Error al liberar conexión al pool:", closeError.message);
+      }
+    }
+  }
+}
+
+/**
  * Cierre controlado del pool al detener la aplicación
  */
 async function closeDbPool() {
@@ -86,5 +125,6 @@ async function closeDbPool() {
 module.exports = {
   initializeDbPool,
   executeQuery,
+  withTransaction,
   closeDbPool,
 };

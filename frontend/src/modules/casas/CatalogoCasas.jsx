@@ -1,6 +1,25 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../../api/axios";
 import StatusBadge from "../../components/StatusBadge";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  Loader2,
+  Upload,
+  X,
+} from "lucide-react";
+
+const CAMPOS_PLANTILLA = [
+  { columna: "Numero", obligatoria: "Sí", ejemplo: "A-101" },
+  { columna: "Bloque", obligatoria: "Recomendada", ejemplo: "BLOQUE A" },
+  { columna: "Direccion", obligatoria: "Recomendada", ejemplo: "Calle Principal Casa 1" },
+  { columna: "Tipo", obligatoria: "No", ejemplo: "CASA" },
+  { columna: "Estado", obligatoria: "No", ejemplo: "DISPONIBLE" },
+  { columna: "Observaciones", obligatoria: "No", ejemplo: "Notas internas" },
+  { columna: "DPI / Id Propietario", obligatoria: "No", ejemplo: "1234567890101" },
+];
 
 export default function CatalogoCasas() {
   const [casas, setCasas] = useState([]);
@@ -14,6 +33,17 @@ export default function CatalogoCasas() {
   const [isEditing, setIsEditing] = useState(false);
   const [currentCasaId, setCurrentCasaId] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  // Estado del módulo de carga masiva desde Excel
+  const fileInputRef = useRef(null);
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkOwnerId, setBulkOwnerId] = useState("");
+  const [bulkDragging, setBulkDragging] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const [bulkError, setBulkError] = useState("");
+  const [showTemplate, setShowTemplate] = useState(false);
 
   const [formData, setFormData] = useState({
     numeroCasa: "",
@@ -128,6 +158,119 @@ export default function CatalogoCasas() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Carga masiva desde Excel
+  // ---------------------------------------------------------------------------
+  function abrirModalCargaMasiva() {
+    setBulkFile(null);
+    setBulkResult(null);
+    setBulkError("");
+    setBulkOwnerId("");
+    setBulkDragging(false);
+    setShowTemplate(false);
+    setShowBulkModal(true);
+  }
+
+  function cerrarModalCargaMasiva() {
+    if (bulkUploading) return;
+    setShowBulkModal(false);
+    setBulkFile(null);
+    setBulkResult(null);
+    setBulkError("");
+    setBulkOwnerId("");
+    setBulkDragging(false);
+    setShowTemplate(false);
+    // Refresca el catálogo al cerrar el modal
+    cargarDatosIniciales();
+  }
+
+  function seleccionarArchivoExcel(file) {
+    if (!file) return;
+
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (!["xlsx", "xls"].includes(extension)) {
+      setBulkFile(null);
+      setBulkResult(null);
+      setBulkError("Formato no válido. Seleccione un archivo .xlsx o .xls.");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setBulkFile(null);
+      setBulkResult(null);
+      setBulkError("El archivo supera el tamaño máximo permitido de 10 MB.");
+      return;
+    }
+
+    setBulkFile(file);
+    setBulkResult(null);
+    setBulkError("");
+  }
+
+  function handleArchivoChange(event) {
+    seleccionarArchivoExcel(event.target.files?.[0]);
+    event.target.value = "";
+  }
+
+  function handleDropExcel(event) {
+    event.preventDefault();
+    setBulkDragging(false);
+    if (bulkUploading) return;
+    seleccionarArchivoExcel(event.dataTransfer.files?.[0]);
+  }
+
+  async function handleCargaMasiva() {
+    if (!bulkFile) {
+      setBulkError("Seleccione un archivo Excel antes de procesar la carga.");
+      return;
+    }
+
+    setBulkUploading(true);
+    setBulkError("");
+    setBulkResult(null);
+
+    const payload = new FormData();
+    payload.append("archivo", bulkFile);
+    if (bulkOwnerId) payload.append("idPropietario", bulkOwnerId);
+
+    try {
+      const response = await api.post("/casas/carga-masiva", payload, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      if (response.data?.success) {
+        setBulkResult(response.data.data);
+      } else {
+        setBulkError(response.data?.message || "No se pudo procesar el archivo.");
+      }
+    } catch (err) {
+      setBulkError(
+        err.response?.data?.message || "Error de comunicación al procesar el archivo Excel."
+      );
+    } finally {
+      setBulkUploading(false);
+    }
+  }
+
+  async function descargarPlantilla() {
+    try {
+      const response = await api.get("/casas/carga-masiva/plantilla", {
+        responseType: "blob",
+      });
+
+      const url = URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "plantilla-carga-casas.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setBulkError("No se pudo descargar la plantilla. Intente nuevamente.");
+    }
+  }
+
   return (
     <div style={styles.container}>
       {/* Barra de herramientas */}
@@ -138,6 +281,10 @@ export default function CatalogoCasas() {
         <div style={styles.actions}>
           <button onClick={cargarDatosIniciales} style={styles.btnSecondary}>
             Actualizar lista
+          </button>
+          <button onClick={abrirModalCargaMasiva} style={styles.btnExcel}>
+            <FileSpreadsheet size={15} />
+            Carga Masiva Excel
           </button>
           <button onClick={abrirModalCrear} style={styles.btnPrimary}>
             + Registrar Nueva Casa
@@ -401,6 +548,267 @@ export default function CatalogoCasas() {
           </div>
         </div>
       )}
+
+      {/* Modal: Carga masiva desde Excel */}
+      {showBulkModal && (
+        <div style={styles.modalOverlay} onClick={cerrarModalCargaMasiva}>
+          <div
+            style={{ ...styles.modalContent, maxWidth: "680px" }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={styles.modalHeader}>
+              <div style={styles.bulkHeader}>
+                <div style={styles.bulkIconBadge}>
+                  <FileSpreadsheet size={20} />
+                </div>
+                <div>
+                  <h2 style={styles.modalTitle}>Carga Masiva de Casas</h2>
+                  <p style={styles.modalSubtitle}>
+                    Importe varias viviendas desde un archivo Excel (.xlsx / .xls)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={cerrarModalCargaMasiva}
+                style={styles.modalClose}
+                disabled={bulkUploading}
+                aria-label="Cerrar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={styles.bulkTemplateBar}>
+              <span style={styles.bulkTemplateText}>
+                Plantilla recomendada: <strong>Numero, Bloque, Direccion, Tipo</strong>
+              </span>
+              <div style={styles.bulkTemplateActions}>
+                <button
+                  type="button"
+                  onClick={() => setShowTemplate((visible) => !visible)}
+                  style={styles.linkButton}
+                >
+                  {showTemplate ? "Ocultar estructura" : "Ver estructura"}
+                </button>
+                <button type="button" onClick={descargarPlantilla} style={styles.linkButton}>
+                  <Download size={14} />
+                  Descargar plantilla
+                </button>
+              </div>
+            </div>
+
+            {showTemplate && (
+              <div style={styles.templateBox}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Columna</th>
+                      <th style={styles.th}>Obligatoria</th>
+                      <th style={styles.th}>Ejemplo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {CAMPOS_PLANTILLA.map((campo) => (
+                      <tr key={campo.columna} style={styles.tr}>
+                        <td style={styles.td}>
+                          <strong>{campo.columna}</strong>
+                        </td>
+                        <td style={styles.td}>{campo.obligatoria}</td>
+                        <td style={styles.td}>{campo.ejemplo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={styles.templateNote}>
+                  También se aceptan variaciones como "Número", "No.", "Manzana" o
+                  "Dirección". Las columnas Estado, Observaciones y DPI son opcionales;
+                  si no se indica propietario, la casa se asigna a un titular pendiente.
+                </p>
+              </div>
+            )}
+
+            <div style={styles.bulkField}>
+              <label style={styles.label}>Propietario por defecto (opcional)</label>
+              <select
+                value={bulkOwnerId}
+                onChange={(event) => setBulkOwnerId(event.target.value)}
+                style={styles.select}
+                disabled={bulkUploading}
+              >
+                <option value="">-- Propietario pendiente de asignación --</option>
+                {personas.map((persona) => (
+                  <option key={persona.idPersona} value={persona.idPersona}>
+                    {persona.nombreCompleto} {persona.dpi ? `(DPI: ${persona.dpi})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (!bulkUploading) fileInputRef.current?.click();
+              }}
+              onKeyDown={(event) => {
+                if (!bulkUploading && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (!bulkUploading) setBulkDragging(true);
+              }}
+              onDragLeave={() => setBulkDragging(false)}
+              onDrop={handleDropExcel}
+              style={{
+                ...styles.dropzone,
+                ...(bulkDragging ? styles.dropzoneActive : {}),
+                ...(bulkUploading ? styles.dropzoneDisabled : {}),
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleArchivoChange}
+                style={{ display: "none" }}
+              />
+
+              {bulkFile ? (
+                <>
+                  <FileSpreadsheet size={32} color="var(--color-primary, #1B4B82)" />
+                  <strong style={styles.dropzoneFileName}>{bulkFile.name}</strong>
+                  <span style={styles.dropzoneHint}>
+                    {(bulkFile.size / 1024).toFixed(1)} KB · Clic para reemplazar el archivo
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Upload size={30} color="var(--color-primary, #1B4B82)" />
+                  <strong style={styles.dropzoneFileName}>
+                    Arrastre y suelte el archivo Excel aquí
+                  </strong>
+                  <span style={styles.dropzoneHint}>
+                    o haga clic para seleccionarlo (.xlsx / .xls, máx. 10 MB)
+                  </span>
+                </>
+              )}
+            </div>
+
+            {bulkError && (
+              <div style={{ ...styles.alertError, marginTop: "14px" }}>{bulkError}</div>
+            )}
+
+            {bulkResult && (
+              <div
+                style={{
+                  ...styles.bulkResult,
+                  ...(bulkResult.creados === 0 ? styles.bulkResultWarning : {}),
+                }}
+              >
+                <div style={styles.bulkResultSummary}>
+                  {bulkResult.creados > 0 ? (
+                    <CheckCircle2 size={24} color="#15803D" />
+                  ) : (
+                    <AlertTriangle size={24} color="#B45309" />
+                  )}
+                  <div>
+                    <strong
+                      style={{
+                        ...styles.bulkResultTitle,
+                        ...(bulkResult.creados === 0 ? styles.bulkResultTitleWarning : {}),
+                      }}
+                    >
+                      {bulkResult.creados > 0
+                        ? `${bulkResult.creados} casa(s) creada(s) exitosamente`
+                        : "No se pudo crear ninguna casa"}
+                    </strong>
+                    <p style={styles.bulkResultText}>
+                      {bulkResult.totalProcesados} fila(s) procesada(s) ·{" "}
+                      {bulkResult.omitidos} omitida(s) por duplicado ·{" "}
+                      {bulkResult.errores.length} con error
+                    </p>
+                  </div>
+                </div>
+
+                {bulkResult.omitidosDetalle?.length > 0 && (
+                  <details style={styles.bulkDetails}>
+                    <summary style={styles.bulkSummaryWarning}>
+                      Ver detalle de duplicados omitidos ({bulkResult.omitidosDetalle.length})
+                    </summary>
+                    <ul style={styles.bulkList}>
+                      {bulkResult.omitidosDetalle.map((item, index) => (
+                        <li key={`omitido-${index}`}>
+                          Fila {item.fila}: Casa {item.numero} ({item.bloque}) — {item.motivo}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                {bulkResult.errores.length > 0 && (
+                  <div style={{ marginTop: "12px" }}>
+                    <p style={styles.bulkErrorTitle}>
+                      <AlertTriangle size={14} />
+                      Filas con errores ({bulkResult.errores.length})
+                    </p>
+                    <div style={styles.bulkErrorTableWrapper}>
+                      <table style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, width: "70px" }}>Fila</th>
+                            <th style={styles.th}>Motivo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bulkResult.errores.map((error, index) => (
+                            <tr key={`error-${index}`} style={styles.tr}>
+                              <td style={styles.td}>{error.fila}</td>
+                              <td style={styles.td}>{error.motivo}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={styles.modalFooter}>
+              <button
+                type="button"
+                onClick={cerrarModalCargaMasiva}
+                style={styles.btnSecondary}
+                disabled={bulkUploading}
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={handleCargaMasiva}
+                style={styles.btnPrimaryWithIcon}
+                disabled={bulkUploading || !bulkFile}
+              >
+                {bulkUploading ? (
+                  <>
+                    <Loader2 size={15} className="spin" />
+                    Procesando archivo...
+                  </>
+                ) : (
+                  <>
+                    <Upload size={15} />
+                    Procesar carga
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -424,6 +832,7 @@ const styles = {
   },
   actions: {
     display: "flex",
+    flexWrap: "wrap",
     gap: "10px",
   },
   btnPrimary: {
@@ -721,5 +1130,191 @@ const styles = {
     color: "#6B7280",
     marginTop: "4px",
     display: "block",
+  },
+  btnExcel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    backgroundColor: "#ECFDF5",
+    color: "#047857",
+    border: "1px solid #A7F3D0",
+    borderRadius: "8px",
+    padding: "8px 14px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  btnPrimaryWithIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    backgroundColor: "var(--color-primary, #1B4B82)",
+    color: "#FFFFFF",
+    border: "none",
+    borderRadius: "8px",
+    padding: "8px 16px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  bulkHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    minWidth: 0,
+  },
+  bulkIconBadge: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "38px",
+    height: "38px",
+    borderRadius: "10px",
+    backgroundColor: "#EEF4FB",
+    color: "var(--color-primary, #1B4B82)",
+    flexShrink: 0,
+  },
+  bulkTemplateBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "8px",
+    backgroundColor: "var(--color-bg, #F7F9FC)",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    borderRadius: "8px",
+    padding: "10px 12px",
+    marginBottom: "14px",
+  },
+  bulkTemplateText: {
+    fontSize: "12px",
+    color: "var(--color-text-muted, #667085)",
+  },
+  bulkTemplateActions: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "12px",
+  },
+  linkButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: 0,
+    background: "none",
+    border: "none",
+    color: "var(--color-primary, #1B4B82)",
+    fontSize: "12px",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+  templateBox: {
+    border: "1px solid var(--color-border, #E5E7EB)",
+    borderRadius: "8px",
+    padding: "12px",
+    marginBottom: "14px",
+    overflowX: "auto",
+  },
+  templateNote: {
+    fontSize: "11px",
+    lineHeight: 1.5,
+    color: "var(--color-text-muted, #667085)",
+    margin: "10px 0 0 0",
+  },
+  bulkField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    marginBottom: "14px",
+  },
+  dropzone: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    textAlign: "center",
+    padding: "26px 18px",
+    borderRadius: "10px",
+    border: "2px dashed #C7D7EA",
+    backgroundColor: "#F8FBFF",
+    cursor: "pointer",
+    transition: "border-color 0.15s ease, background-color 0.15s ease",
+  },
+  dropzoneActive: {
+    borderColor: "var(--color-primary, #1B4B82)",
+    backgroundColor: "#EEF4FB",
+  },
+  dropzoneDisabled: {
+    opacity: 0.65,
+    cursor: "wait",
+  },
+  dropzoneFileName: {
+    fontSize: "13px",
+    color: "var(--color-text, #101828)",
+    wordBreak: "break-word",
+  },
+  dropzoneHint: {
+    fontSize: "12px",
+    color: "var(--color-text-muted, #667085)",
+  },
+  bulkResult: {
+    marginTop: "14px",
+    border: "1px solid #BBF7D0",
+    backgroundColor: "#F0FDF4",
+    borderRadius: "10px",
+    padding: "14px",
+  },
+  bulkResultWarning: {
+    borderColor: "#FDE68A",
+    backgroundColor: "#FFFBEB",
+  },
+  bulkResultSummary: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+  },
+  bulkResultTitle: {
+    display: "block",
+    fontSize: "14px",
+    color: "#166534",
+  },
+  bulkResultTitleWarning: {
+    color: "#92400E",
+  },
+  bulkResultText: {
+    margin: "3px 0 0 0",
+    fontSize: "12px",
+    color: "#15803D",
+  },
+  bulkDetails: {
+    marginTop: "10px",
+    fontSize: "12px",
+    color: "#92400E",
+  },
+  bulkSummaryWarning: {
+    cursor: "pointer",
+    fontWeight: "600",
+  },
+  bulkList: {
+    margin: "8px 0 0 0",
+    paddingLeft: "20px",
+    lineHeight: 1.6,
+  },
+  bulkErrorTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    margin: "0 0 8px 0",
+    fontSize: "12px",
+    fontWeight: "700",
+    color: "#991B1B",
+  },
+  bulkErrorTableWrapper: {
+    maxHeight: "170px",
+    overflowY: "auto",
+    backgroundColor: "#FFFFFF",
+    border: "1px solid #FECACA",
+    borderRadius: "6px",
   },
 };
