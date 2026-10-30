@@ -27,6 +27,7 @@ const requireAdmin = (req, res, next) => {
 
 // GET /api/notificaciones - Obtener comunicados (Todos los usuarios autenticados)
 router.get("/", verifyToken, notificacionesController.obtenerComunicados);
+router.post("/:id/lectura", verifyToken, notificacionesController.marcarComunicadoLeido);
 
 // POST /api/notificaciones - Publicar comunicado (Solo administradores)
 router.post("/", verifyToken, requireAdmin, notificacionesController.crearComunicado);

@@ -30,7 +30,22 @@ async function getAllUsuarios() {
       p.nombres || ' ' || p.apellidos AS nombre_completo,
       p.correo,
       p.telefono,
-      p.dpi
+      p.dpi,
+      NVL(
+        (SELECT c.id_casa FROM CASA c WHERE c.id_propietario = p.id_persona AND ROWNUM = 1),
+        (SELECT c.id_casa FROM RESIDENTE r JOIN CASA c ON c.id_casa = r.id_casa
+         WHERE r.id_persona = p.id_persona AND r.estado = 'ACTIVO' AND ROWNUM = 1)
+      ) AS id_casa,
+      NVL(
+        (SELECT c.numero_casa FROM CASA c WHERE c.id_propietario = p.id_persona AND ROWNUM = 1),
+        (SELECT c.numero_casa FROM RESIDENTE r JOIN CASA c ON c.id_casa = r.id_casa
+         WHERE r.id_persona = p.id_persona AND r.estado = 'ACTIVO' AND ROWNUM = 1)
+      ) AS numero_casa,
+      NVL(
+        (SELECT c.bloque FROM CASA c WHERE c.id_propietario = p.id_persona AND ROWNUM = 1),
+        (SELECT c.bloque FROM RESIDENTE r JOIN CASA c ON c.id_casa = r.id_casa
+         WHERE r.id_persona = p.id_persona AND r.estado = 'ACTIVO' AND ROWNUM = 1)
+      ) AS bloque
     FROM USUARIO u
     JOIN ROL r ON u.id_rol = r.id_rol
     JOIN PERSONA p ON u.id_persona = p.id_persona
@@ -59,6 +74,9 @@ async function getAllUsuarios() {
       telefono: row.TELEFONO,
       dpi: row.DPI,
     },
+    idCasa: row.ID_CASA,
+      numeroCasa: row.NUMERO_CASA,
+      bloque: row.BLOQUE,
   }));
 }
 

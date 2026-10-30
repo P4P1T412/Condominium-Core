@@ -1,12 +1,7 @@
 const { Router } = require("express");
 const multer = require("multer");
-const verifyJWTModule = require("../../middlewares/verifyJWT");
-const checkRoleModule = require("../../middlewares/checkRole");
+const { verifyToken: verifyJWT, checkRole } = require("../../middlewares/auth.middleware");
 const visitasController = require("./visitas.controller");
-
-// Normalización resiliente de middlewares de autenticación y roles
-const verifyJWT = typeof verifyJWTModule === "function" ? verifyJWTModule : (verifyJWTModule.verifyJWT || verifyJWTModule.authenticateToken);
-const checkRole = typeof checkRoleModule === "function" ? checkRoleModule : checkRoleModule.checkRole;
 
 const router = Router();
 
@@ -35,7 +30,11 @@ router.use(verifyJWT);
 router.get("/", visitasController.obtenerVisitas);
 
 // 2. Crear solicitud de visita individual (Residentes / Condóminos y Admins)
-router.post("/", visitasController.crearVisitaIndividual);
+router.post(
+  "/",
+  checkRole(["ADMIN", "ADMINISTRADOR", "RESIDENTE", "CONDOMINO", "GARITA"]),
+  visitasController.crearVisitaIndividual
+);
 
 // 3. Aprobar solicitud de visita individual (Solo Administrador)
 router.put("/:idVisita/aprobar", checkRole(["ADMIN", "ADMINISTRADOR"]), visitasController.aprobarVisita);
@@ -67,7 +66,7 @@ router.put("/eventos/:idEvento/rechazar", checkRole(["ADMIN", "ADMINISTRADOR"]),
 // 9. Registro masivo express de ingreso en Garita para todos los invitados de un evento (Admins y Garita)
 router.post(
   "/eventos/:idEvento/ingreso-masivo",
-  checkRole(["ADMIN", "ADMINISTRADOR", "GARITA"]),
+  checkRole(["ADMIN", "ADMINISTRADOR"]),
   visitasController.registrarIngresoMasivo
 );
 

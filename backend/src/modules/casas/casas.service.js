@@ -10,6 +10,25 @@
 
 const { executeQuery } = require("../../config/db");
 
+async function getCasasParaGarita() {
+  const query = `
+    SELECT id_casa, numero_casa, bloque
+    FROM CASA
+    WHERE estado <> 'INACTIVA'
+    ORDER BY bloque ASC, numero_casa ASC
+  `;
+  const result = await executeQuery(query, {});
+  const rows = result.rows || result.data || result || [];
+
+  return rows.map((row) => ({
+    id: row.ID_CASA ?? row.id_casa,
+    id_casa: row.ID_CASA ?? row.id_casa,
+    numeroCasa: row.NUMERO_CASA ?? row.numero_casa,
+    numero_casa: row.NUMERO_CASA ?? row.numero_casa,
+    bloque: row.BLOQUE ?? row.bloque,
+  }));
+}
+
 /**
  * Obtiene el listado consolidado de casas con información de propietarios y residentes.
  * 
@@ -533,6 +552,7 @@ async function createPersona(personaData) {
 }
 
 module.exports = {
+  getCasasParaGarita,
   getAllCasas,
   getCasaById,
   createCasa,

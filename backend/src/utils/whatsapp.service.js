@@ -2,7 +2,8 @@ const twilio = require('twilio');
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
-const fromWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
+const fromWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER;
+const defaultCountryCode = process.env.DEFAULT_COUNTRY_CODE;
 
 let client = null;
 if (accountSid && authToken) {
@@ -18,21 +19,25 @@ exports.sendWhatsApp = async ({ to, message }) => {
       throw new Error('El número de destino y el mensaje son obligatorios.');
     }
 
-    let cleanNumber = to.trim().replace(/[^\d+]/g, '');
-    if (!cleanNumber.startsWith('+')) {
-      const defaultCountryCode = process.env.DEFAULT_COUNTRY_CODE || '+502';
-      cleanNumber = `${defaultCountryCode}${cleanNumber}`;
-    }
-
-    const formattedTo = cleanNumber.startsWith('whatsapp:') ? cleanNumber : `whatsapp:${cleanNumber}`;
-
     if (!client) {
       console.log('--- [SIMULACIÓN WHATSAPP] ---');
-      console.log(`Para: ${formattedTo}`);
+      console.log(`Para: ${to}`);
       console.log(`Mensaje:\n${message}`);
       console.log('------------------------------');
       return { success: true, simulated: true };
     }
+
+    if (!fromWhatsAppNumber) {
+      throw new Error('TWILIO_WHATSAPP_NUMBER no está configurado.');
+    }
+
+    let cleanNumber = to.trim().replace(/[^\d+]/g, '');
+    if (!cleanNumber.startsWith('+')) {
+      if (!defaultCountryCode) throw new Error('DEFAULT_COUNTRY_CODE no está configurado.');
+      cleanNumber = `${defaultCountryCode}${cleanNumber}`;
+    }
+
+    const formattedTo = `whatsapp:${cleanNumber}`;
 
     const response = await client.messages.create({
       body: message,

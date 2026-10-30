@@ -121,7 +121,8 @@ const procesarEventoMasivo = async (fileBuffer, nombreEvento, fechaEvento, datos
  */
 const obtenerVisitas = async (user) => {
   const rolUpper = String(user?.rol || user?.role || "").toUpperCase();
-  const esAdmin = rolUpper === "ADMIN" || rolUpper === "ADMINISTRADOR" || rolUpper === "GARITA";
+  const esAdmin = rolUpper === "ADMIN" || rolUpper === "ADMINISTRADOR";
+  const esGarita = rolUpper === "GARITA";
   const casaId = user?.casaId || user?.id_casa;
 
   let sql = `
@@ -151,9 +152,15 @@ const obtenerVisitas = async (user) => {
     LEFT JOIN PERSONA p ON r.id_persona = p.id_persona`;
 
   const params = {};
-  if (!esAdmin && casaId && Number(casaId) > 0) {
+  if (esGarita) {
+    sql += `
+      WHERE v.estado IN ('AUTORIZADA', 'DENTRO', 'FINALIZADA')
+        AND (v.id_evento IS NULL OR e.estado_aprobacion IN ('ENVIADO_GARITA', 'APROBADO'))`;
+  } else if (!esAdmin && casaId && Number(casaId) > 0) {
     sql += ` WHERE v.id_casa = :casaId`;
     params.casaId = Number(casaId);
+  } else if (!esAdmin) {
+    sql += " WHERE 1 = 0";
   }
 
   sql += ` ORDER BY v.id_visita DESC`;
@@ -224,37 +231,61 @@ const crearVisitaIndividual = async (datos, user) => {
   const idEvento = datos.idEvento || datos.id_evento || null;
 
   const rolUpper = String(user?.rol || user?.role || "").toUpperCase();
-  const esAdmin = rolUpper === "ADMIN" || rolUpper === "ADMINISTRADOR" || rolUpper === "GARITA";
+  const esAdmin = rolUpper === "ADMIN" || rolUpper === "ADMINISTRADOR";
+  const esGarita = rolUpper === "GARITA";
 
-  const estadoFinal = esAdmin ? "AUTORIZADA" : "PENDIENTE";
-  const tokenQR = esAdmin ? crypto.randomUUID() : null;
+  if (!nombreVisitante || !identificacion || !Number.isSafeInteger(Number(casaId)) || Number(casaId) <= 0) {
+    const error = new Error("Selecciona una casa e ingresa el nombre y la identificación del visitante.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const residenteResult = await db.executeQuery(
+    `SELECT id_residente FROM RESIDENTE
+     WHERE id_casa = :casaId AND estado = 'ACTIVO'
+     ORDER BY CASE WHEN es_principal = 'SI' THEN 0 ELSE 1 END, id_residente
+     FETCH FIRST 1 ROWS ONLY`,
+    { casaId: Number(casaId) }
+  );
+  const residentes = residenteResult.rows || residenteResult.data || residenteResult || [];
+  const idResidente = residentes[0]?.ID_RESIDENTE ?? residentes[0]?.id_residente;
+
+  const estadoFinal = esGarita ? "DENTRO" : esAdmin ? "AUTORIZADA" : "PENDIENTE";
+  const tokenQR = esAdmin || esGarita ? crypto.randomUUID() : null;
 
   const sql = `
     INSERT INTO VISITA (
       id_casa, id_residente, id_evento, nombre_visitante, identificacion, 
-      placa_vehiculo, correo_visitante, fecha_esperada, estado, token_qr
+      placa_vehiculo, correo_visitante, fecha_esperada, fecha_entrada, estado, token_qr
     ) VALUES (
-      :casaId, 1, :idEvento, :nombre, :identificacion, 
-      :placa, :correo, TO_DATE(:fecha, 'YYYY-MM-DD'), :estado, :token
+      :casaId, :idResidente, :idEvento, :nombre, :identificacion, 
+      :placa, :correo, TO_DATE(:fecha, 'YYYY-MM-DD'), :fechaEntrada, :estado, :token
     )`;
 
   await db.executeQuery(
     sql,
     {
       casaId: Number(casaId),
+      idResidente: Number(idResidente),
       idEvento: idEvento ? Number(idEvento) : null,
-      nombre: String(nombreVisitante),
-      identificacion: String(identificacion),
+      nombre: String(nombreVisitante).trim(),
+      identificacion: identificacion ? String(identificacion).trim() : null,
       placa: placaVehiculo,
       correo: correoVisitante,
       fecha: fechaEsperada,
+      fechaEntrada: esGarita ? new Date() : null,
       estado: estadoFinal,
       token: tokenQR,
     },
     { autoCommit: true }
   );
 
-  return { message: esAdmin ? "Visita autorizada exitosamente." : "Solicitud de invitado enviada a Administración." };
+  const message = esGarita
+    ? "Visita express registrada en bitácora."
+    : esAdmin
+    ? "Visita autorizada exitosamente."
+    : "Solicitud de invitado enviada a Administración.";
+  return { message };
 };
 
 /**

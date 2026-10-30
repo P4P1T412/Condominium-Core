@@ -110,7 +110,13 @@ async function authenticateUser(usernameOrEmail, password) {
   };
 
   // 6. Firma criptográfica del token JWT
-  const secretKey = process.env.JWT_SECRET || "fallback_secret_condominio_dev";
+  const secretKey = process.env.JWT_SECRET;
+  if (!secretKey) {
+    const error = new Error("JWT_SECRET no está configurado en el backend.");
+    error.statusCode = 500;
+    error.code = "SERVER_CONFIG_ERROR";
+    throw error;
+  }
   const expiresIn = process.env.JWT_EXPIRES_IN || "8h";
 
   const token = jwt.sign(payload, secretKey, { expiresIn });

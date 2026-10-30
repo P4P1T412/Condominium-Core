@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * SERVICIO DE CORREO ELECTRÓNICO (Nodemailer con Gmail + Simulación)
+ * SERVICIO DE CORREO ELECTRÓNICO (SMTP configurable + Simulación)
  * =============================================================================
  */
 
@@ -8,28 +8,27 @@ const nodemailer = require("nodemailer");
 
 const EMAIL_USER = process.env.EMAIL_USER || process.env.SMTP_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS || process.env.SMTP_PASS;
-const EMAIL_FROM =
-  process.env.EMAIL_FROM || `"Sistema Condominio" <${EMAIL_USER}>`;
+const EMAIL_FROM = process.env.EMAIL_FROM || (EMAIL_USER ? `"Sistema Condominio" <${EMAIL_USER}>` : undefined);
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = process.env.SMTP_SECURE === "true";
+const EMAIL_SERVICE = process.env.EMAIL_SERVICE;
 
 // URL base del frontend para construir los enlaces de recuperación.
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL;
 
 // Vigencia del enlace de recuperación (solo informativa para la plantilla).
 const HORAS_VIGENCIA_TOKEN = 1;
 
-// Validación básica de entorno
-const CONFIGURACION_INVALIDA = !EMAIL_USER || !EMAIL_PASS;
-
-/**
- * Transporter SMTP utilizando el servicio integrado de Gmail.
- */
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS,
-  },
-});
+const transporterOptions = SMTP_HOST
+  ? { host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_SECURE }
+  : EMAIL_SERVICE
+  ? { service: EMAIL_SERVICE }
+  : null;
+const CONFIGURACION_INVALIDA = !EMAIL_USER || !EMAIL_PASS || !transporterOptions;
+const transporter = CONFIGURACION_INVALIDA
+  ? null
+  : nodemailer.createTransport({ ...transporterOptions, auth: { user: EMAIL_USER, pass: EMAIL_PASS } });
 
 /**
  * Plantilla HTML del correo de verificación.

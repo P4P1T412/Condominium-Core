@@ -2,26 +2,24 @@
  * =============================================================================
  * MIDDLEWARE: AUTENTICACIÓN Y AUTORIZACIÓN (RBAC)
  * =============================================================================
- * Descripción:
- *   1. verifyToken: Valida la autenticidad del JWT almacenado en cookies (o cabecera).
- *   2. requireRole: Restringe el acceso en base a una lista blanca de roles permitidos.
- * =============================================================================
  */
 
 const jwt = require("jsonwebtoken");
 
 /**
- * Intercepta la petición y valida la existencia y validez del token JWT.
+ * Valida la autenticidad del JWT almacenado en cookies o cabeceras.
  */
 function verifyToken(req, res, next) {
-  // Se busca prioritariamente en la cookie httpOnly; opcionalmente en el header Authorization
-  let token = req.cookies ? req.cookies.token : null;
+  let token = req.cookies ? (req.cookies.token || req.cookies.jwt || req.cookies.token_acceso) : null;
 
-  if (!token && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
-    token = req.headers.authorization.split(" ")[1];
+  if (!token && req.headers) {
+    const authHeader = req.headers.authorization || req.headers.Authorization || req.headers["x-access-token"];
+    if (authHeader) {
+      token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader;
+    }
   }
 
-  if (!token) {
+  if (!token || token === "null" || token === "undefined") {
     return res.status(401).json({
       success: false,
       code: "TOKEN_MISSING",
@@ -30,10 +28,16 @@ function verifyToken(req, res, next) {
   }
 
   try {
-    const secretKey = process.env.JWT_SECRET || "fallback_secret_condominio_dev";
+    const secretKey = process.env.JWT_SECRET;
+    if (!secretKey) {
+      return res.status(503).json({
+        success: false,
+        code: "SERVER_CONFIG_ERROR",
+        message: "JWT_SECRET no está configurado en el backend.",
+      });
+    }
     const decoded = jwt.verify(token, secretKey);
 
-    // Se asocia el payload decodificado a la petición para los controladores subsecuentes
     req.user = decoded;
     next();
   } catch (error) {
@@ -49,27 +53,39 @@ function verifyToken(req, res, next) {
 }
 
 /**
- * Generador de middleware para control de acceso basado en roles (RBAC).
- * 
- * @param {...string} allowedRoles - Lista de roles autorizados (ej: 'ADMINISTRADOR', 'GARITA')
+ * Middleware genérico para verificar el rol del usuario (soporta arreglo o parámetros rest).
  */
-function requireRole(...allowedRoles) {
+function checkRole(...allowedRoles) {
+  const rolesFlat = allowedRoles.flat().map((r) => String(r).toUpperCase());
+
   return (req, res, next) => {
-    if (!req.user || !req.user.role) {
-      return res.status(403).json({
+    if (!req.user) {
+      return res.status(401).json({
         success: false,
-        code: "FORBIDDEN_ROLE",
-        message: "No posee permisos configurados para acceder a este recurso.",
+        code: "UNAUTHORIZED",
+        message: "Usuario no autenticado.",
       });
     }
 
-    const hasPermission = allowedRoles.includes(req.user.role);
+    // Normalizar propiedad del rol (rol vs role)
+    const userRoleRaw = req.user.rol || req.user.role || "";
+    const userRole = String(userRoleRaw).toUpperCase();
+
+    if (!userRole) {
+      return res.status(403).json({
+        success: false,
+        code: "FORBIDDEN_ROLE",
+        message: "No posee un rol configurado para acceder a este recurso.",
+      });
+    }
+
+    const hasPermission = rolesFlat.includes(userRole);
 
     if (!hasPermission) {
       return res.status(403).json({
         success: false,
         code: "ACCESS_DENIED",
-        message: `Acceso denegado. Se requiere uno de los siguientes roles: [${allowedRoles.join(", ")}].`,
+        message: `Acceso denegado. Tu rol (${userRole}) no posee permisos. Se requiere uno de los siguientes: [${rolesFlat.join(", ")}].`,
       });
     }
 
@@ -77,7 +93,11 @@ function requireRole(...allowedRoles) {
   };
 }
 
+// Alias para mantener compatibilidad con requireRole
+const requireRole = checkRole;
+
 module.exports = {
   verifyToken,
+  checkRole,
   requireRole,
 };

@@ -71,7 +71,7 @@ export default function VisitasPage() {
 
   const cargarCasas = async () => {
     try {
-      const res = await api.get("/casas");
+      const res = await api.get(esGarita ? "/casas/garita" : "/casas");
       const casasData = res.data?.data || res.data || [];
       setListaCasas(casasData);
 
@@ -928,10 +928,14 @@ export default function VisitasPage() {
                       const idCasaVal = c.ID_CASA || c.id_casa || c.id;
                       const numCasaVal = c.NUMERO_CASA || c.numero_casa || c.numeroCasa;
                       const condomino = c.NOMBRE_CONDOMINO || c.nombre_condomino || "Propietario";
+                      const bloque = c.BLOQUE || c.bloque;
+                      const etiquetaCasa = esGarita
+                        ? `Casa #${numCasaVal || idCasaVal}${bloque ? ` - Manzana ${bloque}` : ""}`
+                        : `Casa ${numCasaVal || idCasaVal} (${condomino})`;
 
                       return (
                         <option key={idCasaVal} value={idCasaVal}>
-                          Casa {numCasaVal || idCasaVal} ({condomino})
+                          {etiquetaCasa}
                         </option>
                       );
                     })}

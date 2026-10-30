@@ -8,7 +8,7 @@ oracledb.autoCommit = false;
 const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  connectString: process.env.DB_CONNECT_STRING,
+  connectString: process.env.DB_CONNECTION_STRING || process.env.DB_CONNECT_STRING,
   poolMin: 2,
   poolMax: 10,
   poolIncrement: 2,
@@ -23,6 +23,14 @@ let pool;
  * Inicializa el pool de conexiones a Oracle Database
  */
 async function initializeDbPool() {
+  const missingVariables = [];
+  if (!dbConfig.user) missingVariables.push("DB_USER");
+  if (!dbConfig.password) missingVariables.push("DB_PASSWORD");
+  if (!dbConfig.connectString) missingVariables.push("DB_CONNECTION_STRING");
+  if (missingVariables.length > 0) {
+    throw new Error(`Faltan variables Oracle requeridas en backend/.env: ${missingVariables.join(", ")}`);
+  }
+
   try {
     pool = await oracledb.createPool(dbConfig);
     console.log("✅ Pool de conexiones a Oracle Database inicializado con éxito");
@@ -69,6 +77,36 @@ async function executeQuery(sql, binds = {}, options = {}) {
   }
 }
 
+async function executeTransaction(operation) {
+  let connection;
+  try {
+    if (!pool) {
+      throw new Error("ORA-POOL-NOT-INIT: El pool de conexiones no está listo.");
+    }
+    connection = await pool.getConnection();
+    const result = await operation(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Error al hacer rollback:", rollbackError.message);
+      }
+    }
+    throw error;
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (closeError) {
+        console.error("Error al liberar conexión al pool:", closeError.message);
+      }
+    }
+  }
+}
+
 /**
  * Cierre controlado del pool al detener la aplicación
  */
@@ -86,5 +124,6 @@ async function closeDbPool() {
 module.exports = {
   initializeDbPool,
   executeQuery,
+  executeTransaction,
   closeDbPool,
 };

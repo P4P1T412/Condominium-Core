@@ -6,6 +6,15 @@
 
 const casasService = require("./casas.service");
 
+async function getCasasParaGarita(req, res, next) {
+  try {
+    const casas = await casasService.getCasasParaGarita();
+    return res.status(200).json({ success: true, data: casas });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function getCasas(req, res, next) {
   try {
     const { estado, bloque } = req.query;
@@ -161,6 +170,7 @@ async function createPersona(req, res, next) {
 }
 
 module.exports = {
+  getCasasParaGarita,
   getCasas,
   getCasa,
   createCasa,

@@ -35,48 +35,56 @@ git clone <url-del-repo>
 cd condominio-app
 ```
 
-### 2. Base de datos (Oracle con Docker)
+### 2. Configurar entorno y Oracle
 
-Cada desarrollador corre **su propia instancia local** de Oracle — no se comparte una
-sola base para el desarrollo diario.
+Cada desarrollador usa su propia base Oracle local. Copia los ejemplos y cambia los
+valores de contraseña/secretos antes de iniciar:
 
-1. Instala [Docker Desktop](https://www.docker.com/) y déjalo abierto.
-2. Levanta el contenedor:
-   ```bash
-   docker run -d --name condominio-oracle -p 1521:1521 -e ORACLE_PASSWORD=TuPasswordSegura123 -e APP_USER=condominio_app -e APP_USER_PASSWORD=TuPasswordSegura123 gvenzl/oracle-free:23-slim
-   ```
-3. Espera a que inicialice (`docker logs -f condominio-oracle` hasta ver `DATABASE IS READY TO USE!`).
-4. Ejecuta los scripts de `database/ddl/`, `database/seeds/` y `database/views/` con
-   DBeaver u otro cliente SQL, conectando a `localhost:1521`, service name `FREEPDB1`.
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
 
-Instrucciones completas, comandos del contenedor y solución de problemas en
+En PowerShell puedes usar `Copy-Item backend/.env.example backend/.env` y el comando
+equivalente para `frontend`. `backend/.env` configura Oracle, JWT, CORS y servicios
+opcionales; `frontend/.env` configura la URL de la API. Los archivos `.env` reales no
+se versionan.
+
+Con Docker Desktop instalado, inicia Oracle desde la carpeta `backend`:
+
+```bash
+cd backend
+docker compose up -d oracle
+docker compose logs -f oracle
+```
+
+Al crear una base nueva, Oracle ejecuta los scripts de `database/ddl/` en orden. Los
+seeds de `database/seeds/` deben ejecutarse una vez con SQLcl/DBeaver. En un volumen
+existente, los scripts de inicialización no vuelven a ejecutarse automáticamente;
+aplica manualmente las migraciones numeradas pendientes. Consulta
 [`database/README.md`](./database/README.md).
 
 ### 3. Backend
+
+Desde `backend/`, instala dependencias e inicia la API:
+
 ```bash
-cd backend
 npm install
-cp .env.example .env
-```
-Edita tu `.env` con los datos del contenedor que acabas de levantar:
-```env
-DB_USER=condominio_app
-DB_PASSWORD=TuPasswordSegura123
-DB_CONNECT_STRING=localhost:1521/FREEPDB1
-JWT_SECRET=cambia_este_valor_por_uno_seguro
-```
-Luego levanta el servidor:
-```bash
-npm run dev   # http://localhost:4000
+npm run dev
 ```
 
+La API escucha en el puerto definido por `PORT` (por defecto 4000).
+
 ### 4. Frontend
+
+Desde `frontend/`, instala dependencias e inicia Vite:
+
 ```bash
-cd frontend
 npm install
-cp .env.example .env      # apunta VITE_API_URL a tu backend local
-npm run dev                # http://localhost:5173
+npm run dev
 ```
+
+Vite muestra la URL disponible (por defecto `http://localhost:5173`).
 
 ## Flujo de ramas
 

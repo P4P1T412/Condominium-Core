@@ -16,6 +16,7 @@ const authRoutes = require("./modules/auth/auth.routes");
 const casasRoutes = require("./modules/casas/casas.routes");
 const pagosRoutes = require("./modules/pagos/pagos.routes");
 const notificacionesRoutes = require("./modules/notificaciones/notificaciones.routes");
+const quejasRoutes = require("./modules/quejas/quejas.routes"); // ✅ Importación explícita del módulo de quejas
 const seguridadRoutes = require("./modules/seguridad/seguridad.routes");
 const usuariosRoutes = require("./modules/usuarios/usuarios.routes");
 const visitasRoutes = require("./modules/visitas/visitas.routes");
@@ -26,9 +27,19 @@ const app = express();
 app.use(helmet());
 
 // Configuración CORS estricta para soportar cookies httpOnly desde React (Vite)
+const allowedClientOrigins = (process.env.CLIENT_URL || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const isProduction = process.env.NODE_ENV === "production";
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      if (!origin || allowedClientOrigins.includes(origin) || (!isProduction && allowedClientOrigins.length === 0)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Origen no permitido por CORS."));
+    },
     credentials: true, // Permite envío y recepción de cookies
   })
 );
@@ -51,18 +62,18 @@ app.use("/api/auth", authRoutes);
 app.use("/api/casas", casasRoutes);
 app.use("/api/pagos", pagosRoutes);
 app.use("/api/notificaciones", notificacionesRoutes);
-app.use("/api/quejas", notificacionesRoutes); // Alias para solicitudes de quejas y buzón
+app.use("/api/quejas", quejasRoutes); // ✅ Montaje del router de quejas independiente
 app.use("/api/seguridad", seguridadRoutes);
 app.use("/api/usuarios", usuariosRoutes);
 app.use("/api/visitas", visitasRoutes);
 
-// Health check real contra Oracle (clave para demostración de fallas simuladas)
+// Health check real contra Oracle
 app.get("/api/health", async (req, res, next) => {
   try {
     const result = await executeQuery("SELECT SYSDATE, 'OK' AS DB_STATUS FROM DUAL");
     res.json({
       status: "ok",
-      database: "Connected to Oracle 23c (Docker)",
+      database: "Connected to Oracle",
       timestamp: result.rows[0].SYSDATE,
     });
   } catch (error) {
@@ -80,7 +91,7 @@ async function startServer() {
   try {
     await initializeDbPool();
     app.listen(PORT, () => {
-      console.log(`🚀 Servidor backend corriendo en http://localhost:${PORT}`);
+      console.log(`Servidor backend escuchando en el puerto ${PORT}`);
     });
   } catch (error) {
     console.error("No se pudo iniciar el servidor debido a error en BD:", error);

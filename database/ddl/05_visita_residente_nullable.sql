@@ -1,0 +1,13 @@
+DECLARE
+  v_nullable VARCHAR2(1);
+BEGIN
+  SELECT nullable INTO v_nullable
+  FROM USER_TAB_COLUMNS
+  WHERE TABLE_NAME = 'VISITA'
+    AND COLUMN_NAME = 'ID_RESIDENTE';
+
+  IF v_nullable = 'N' THEN
+    EXECUTE IMMEDIATE 'ALTER TABLE VISITA MODIFY (id_residente NULL)';
+  END IF;
+END;
+/

@@ -10,10 +10,11 @@ router.use(verifyToken);
 // Accesible en: GET /api/casas/personas
 router.get("/personas", requireRole("ADMINISTRADOR"), casasController.getPersonas);
 router.post("/personas", requireRole("ADMINISTRADOR"), casasController.createPersona);
+router.get("/garita", requireRole("GARITA"), casasController.getCasasParaGarita);
 
-// Consultas (Administrador, Garita o Condómino para autogestión)
-router.get("/", requireRole("ADMINISTRADOR", "GARITA", "CONDOMINO"), casasController.getCasas);
-router.get("/:id", requireRole("ADMINISTRADOR", "GARITA", "CONDOMINO"), casasController.getCasa);
+// Consultas (Administrador o Condómino para autogestión)
+router.get("/", requireRole("ADMINISTRADOR", "CONDOMINO"), casasController.getCasas);
+router.get("/:id", requireRole("ADMINISTRADOR", "CONDOMINO"), casasController.getCasa);
 
 // Modificaciones exclusivas del Administrador
 router.post("/", requireRole("ADMINISTRADOR"), casasController.createCasa);

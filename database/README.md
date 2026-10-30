@@ -1,60 +1,54 @@
 # Base de datos — Sistema de Gestión de Condominio
 
-Cada desarrollador corre **su propia instancia local** de Oracle — no se comparte una
-sola base para el desarrollo diario. Para esto se recomienda usar Docker junto con
-DBeaver (u otro cliente SQL de tu preferencia).
+Cada desarrollador usa su propia instancia Oracle. Las credenciales se configuran
+solo en `backend/.env`, creado desde [`backend/.env.example`](../backend/.env.example);
+ese archivo real está excluido de Git.
 
-## Cómo levantar tu base local
+## Iniciar Oracle
 
-1. Instala [Docker Desktop](https://www.docker.com/) y déjalo abierto.
-2. Levanta el contenedor de Oracle (usamos `gvenzl/oracle-free`, una imagen ligera que
-   no requiere cuenta de Oracle):
+1. Instala Docker Desktop.
+2. Desde la raíz del repositorio, copia `backend/.env.example` a `backend/.env` y
+   reemplaza las contraseñas de ejemplo por valores locales.
+3. Inicia Oracle desde `backend/`:
    ```bash
-   docker run -d --name condominio-oracle -p 1521:1521 -e ORACLE_PASSWORD=TuPasswordSegura123 -e APP_USER=condominio_app -e APP_USER_PASSWORD=TuPasswordSegura123 gvenzl/oracle-free:23-slim
+   docker compose up -d oracle
+   docker compose logs -f oracle
    ```
-   > En Windows/PowerShell, pega el comando completo en una sola línea (no lo dividas
-   > con `\`, esa sintaxis es de bash/Linux, no de PowerShell).
-3. Espera a que termine de inicializar (la primera vez tarda unos minutos):
-   ```bash
-   docker logs -f condominio-oracle
-   ```
-   Cuando veas `DATABASE IS READY TO USE!`, ya puedes continuar.
-4. Conéctate con DBeaver (o tu cliente SQL preferido):
-   - Host: `localhost`
-   - Puerto: `1521`
-   - Base de datos / Service name: `FREEPDB1`
-   - Usuario: `condominio_app`
-   - Contraseña: la que pusiste en `APP_USER_PASSWORD`
-5. Ejecuta los scripts de `ddl/` **en orden numérico** (01, 02, 03...), ya que las
-   tablas posteriores dependen de las anteriores por sus llaves foráneas. Luego corre
-   los de `seeds/` para los roles base, y los de `views/` si tu módulo los necesita.
+4. Espera a que aparezca `DATABASE IS READY TO USE!`.
 
-## Comandos útiles del contenedor
+El Compose monta `database/ddl/` y Oracle ejecuta esos scripts en orden al crear un
+volumen nuevo. Después ejecuta los scripts de `database/seeds/` una vez con SQLcl o
+DBeaver para cargar roles y datos de prueba. Si usas un volumen existente, las
+migraciones no se vuelven a ejecutar automáticamente: aplica cada archivo numerado
+pendiente una vez.
+
+La conexión del backend usa `DB_USER`, `DB_PASSWORD` y `DB_CONNECTION_STRING`. El
+valor de ejemplo apunta al service name `FREEPDB1`; si cambias `ORACLE_PORT`, actualiza
+también el puerto de `DB_CONNECTION_STRING`.
+
+## Comandos útiles
+
+Desde `backend/`:
 
 ```bash
-docker stop condominio-oracle     # apagarlo
-docker start condominio-oracle    # volver a encenderlo
-docker rm -f condominio-oracle    # borrarlo por completo (para empezar de cero)
+docker compose stop oracle
+docker compose start oracle
+docker compose down
 ```
 
-## Solución de problemas comunes
+`docker compose down -v` también elimina el volumen con los datos locales de Oracle.
+Úsalo solo cuando quieras borrar la base completa.
 
-- **`Conflict. The container name "/condominio-oracle" is already in use`**: ya existe
-  un contenedor con ese nombre (por ejemplo, de un intento anterior que falló). Bórralo
-  con `docker rm -f condominio-oracle` y vuelve a correr el `docker run` del paso 2.
-- **`Cannot connect to the Docker daemon`**: Docker Desktop no está abierto. Ábrelo y
-  espera a que termine de iniciar antes de correr el comando.
-- **`port is already allocated`**: algo más en tu computadora está usando el puerto
-  1521. Cierra ese programa o cambia el puerto publicado (por ejemplo `-p 1522:1521`),
-  y ajusta `DB_CONNECT_STRING` en tu `.env` acorde.
+## Solución de problemas
+
+- **Docker no responde**: inicia Docker Desktop y espera a que esté listo.
+- **Puerto ocupado**: cambia `ORACLE_PORT` en `backend/.env` y actualiza el puerto
+  dentro de `DB_CONNECTION_STRING`.
+- **El backend no conecta**: comprueba que Oracle haya terminado de iniciar y que
+  `DB_USER`, `DB_PASSWORD` y `DB_CONNECTION_STRING` coincidan con el Compose.
 
 ## Reglas del equipo
 
-- No se sube ninguna base de datos completa ni exports de datos reales al repositorio
-  — solo estructura (DDL) y datos de prueba (seeds).
-- Cada desarrollador reconstruye su base local desde estos scripts; no se depende de
-  una sola base compartida para el desarrollo diario.
-- Si cambias una tabla, actualiza el script correspondiente en `ddl/` en el mismo
-  commit — no lo dejes solo en tu base local.
-- Las credenciales de conexión van en el `.env` de `backend/` (nunca en estos scripts
-  ni en el repositorio).
+- No se suben bases de datos completas ni exports de datos reales; solo DDL y seeds.
+- Si cambia una tabla, actualiza su DDL/migración en el mismo commit.
+- No subas archivos `.env` reales ni credenciales al repositorio.
