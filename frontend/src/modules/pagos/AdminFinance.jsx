@@ -272,7 +272,6 @@ function DelinquentTab() {
           <div className="finance-row" key={row.idMulta}>
             <div>
               <div className="finance-strong">Casa {row.casa}</div>
-              <div className="finance-muted">{row.propietario}</div>
               <div className="finance-muted">{row.motivo}</div>
             </div>
             <div className="finance-strong">{money(row.monto)}</div>
