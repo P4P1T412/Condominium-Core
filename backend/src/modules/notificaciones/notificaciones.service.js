@@ -1,153 +1,266 @@
+const oracledb = require("oracledb");
 const db = require("../../config/db");
-const { sendEmail } = require("../../utils/email.service");
-const { sendWhatsApp } = require("../../utils/whatsapp.service");
+const {
+  TIPOS_DESTINATARIO,
+  normalizarRol,
+  normalizarTipoDestinatario,
+  parseBoolean,
+  toPositiveNumber,
+  resolverRolDestino,
+  listarUsuariosDestino,
+  obtenerDestinatarios,
+  enviarNotificaciones,
+} = require("../../utils/recipients.service");
+
+const CANALES_VALIDOS = ["APP", "EMAIL", "WHATSAPP", "AMBOS", "TODOS"];
+
+function crearError(mensaje, statusCode = 400, code = "VALIDATION_ERROR") {
+  const error = new Error(mensaje);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
 
 /**
- * Obtiene la lista de comunicados filtrando según el rol del usuario.
- * Soporta roles 'CONDOMINO' y 'RESIDENTE', además de 'ADMIN' / 'GARITA'.
+ * Obtiene los comunicados visibles para el usuario autenticado.
+ * - ADMINISTRADOR / ADMIN: ve todo el histórico.
+ * - GARITA: ve comunicados globales, para garita y los dirigidos a su usuario.
+ * - CONDOMINO / RESIDENTE: ve globales, para condóminos y los dirigidos a su usuario.
  */
 exports.obtenerComunicados = async (user) => {
-  const rolUpper = String(user?.rol || user?.role || "").toUpperCase();
-  const casaIdSafe = user?.casaId || user?.id_casa || null;
-  const userIdSafe = user?.id || user?.id_usuario || null;
+  const rol = normalizarRol(user?.rol || user?.role);
+  const casaId = toPositiveNumber(user?.casaId || user?.id_casa);
+  const userId = toPositiveNumber(user?.id || user?.id_usuario || user?.userId);
+
+  const columnas = `
+    c.id_comunicado,
+    c.id_usuario,
+    c.id_casa_destino,
+    c.id_usuario_destino,
+    c.tipo_destinatario,
+    c.rol_destino,
+    c.titulo,
+    c.contenido,
+    c.canal_envio,
+    c.enviar_whatsapp,
+    c.fecha_publicacion,
+    c.fecha_vencimiento,
+    c.estado,
+    u.nombre_usuario AS autor,
+    cs.numero_casa,
+    pd.nombres || ' ' || pd.apellidos AS destinatario_usuario`;
+
+  const joins = `
+    FROM COMUNICADO c
+    LEFT JOIN USUARIO u ON c.id_usuario = u.id_usuario
+    LEFT JOIN CASA cs ON c.id_casa_destino = cs.id_casa
+    LEFT JOIN USUARIO ud ON c.id_usuario_destino = ud.id_usuario
+    LEFT JOIN PERSONA pd ON ud.id_persona = pd.id_persona`;
 
   try {
-    if (rolUpper === "RESIDENTE" || rolUpper === "CONDOMINO") {
-      const sql = `
-        SELECT 
-          c.id_comunicado,
-          c.titulo,
-          c.contenido,
-          c.canal_envio,
-          c.fecha_publicacion,
-          c.estado,
-          u.nombre_usuario AS autor
-        FROM COMUNICADO c
-        LEFT JOIN USUARIO u ON c.id_usuario = u.id_usuario
-        WHERE c.estado = 'ACTIVO'
-          AND (
-            (c.id_casa_destino IS NULL)
-            OR (c.id_casa_destino = :casaId)
-          )
-        ORDER BY c.fecha_publicacion DESC`;
-
-      const result = await db.executeQuery(sql, { casaId: casaIdSafe ? Number(casaIdSafe) : null });
-      return result.rows || result.data || result || [];
+    if (["ADMIN", "ADMINISTRADOR"].includes(rol)) {
+      const result = await db.executeQuery(
+        `SELECT ${columnas} ${joins} ORDER BY c.fecha_publicacion DESC`,
+        {}
+      );
+      return result.rows || [];
     }
 
-    // Vista para Administrador / Garita (muestra todo el histórico)
+    const esGarita = rol === "GARITA";
+    const tiposVisibles = esGarita
+      ? `'TODOS', 'GARITA'`
+      : `'TODOS', 'CONDOMINOS'`;
+
     const sql = `
-      SELECT 
-        c.id_comunicado,
-        c.titulo,
-        c.contenido,
-        c.canal_envio,
-        c.fecha_publicacion,
-        c.estado,
-        c.id_casa_destino,
-        u.nombre_usuario AS autor,
-        cs.numero_casa
-      FROM COMUNICADO c
-      LEFT JOIN USUARIO u ON c.id_usuario = u.id_usuario
-      LEFT JOIN CASA cs ON c.id_casa_destino = cs.id_casa
+      SELECT ${columnas}
+      ${joins}
+      WHERE c.estado = 'ACTIVO'
+        AND (c.id_casa_destino IS NULL OR c.id_casa_destino = :casaId)
+        AND (
+          c.tipo_destinatario IS NULL
+          OR c.tipo_destinatario IN (${tiposVisibles})
+          OR (c.tipo_destinatario = 'ESPECIFICO' AND c.id_usuario_destino = :userId)
+        )
       ORDER BY c.fecha_publicacion DESC`;
 
-    const result = await db.executeQuery(sql, {});
-    return result.rows || result.data || result || [];
+    const result = await db.executeQuery(sql, {
+      casaId: casaId || null,
+      userId: userId || null,
+    });
+
+    return result.rows || [];
   } catch (error) {
-    console.error("Aviso: Error en consulta de comunicados (defensivo):", error.message);
-    return []; // Responde con array vacío para evitar un error 500 en el frontend
+    console.error("Error al consultar comunicados:", error.message);
+    throw error;
   }
 };
 
 /**
- * Registra un comunicado en Oracle DB (Buzón de quejas / avisos) y gestiona el envío multicanal.
+ * Registra un aviso/circular y despacha las notificaciones secundarias.
  */
-exports.crearComunicado = async (datos, adminId) => {
-  const {
-    titulo,
-    contenido,
-    idCasaDestino,
-    idUsuarioDestino,
-    canalEnvio,
-    fechaVencimiento
-  } = datos;
+exports.crearComunicado = async (datos = {}, usuario = {}) => {
+  const user = typeof usuario === "object" && usuario !== null
+    ? usuario
+    : { id: usuario, rol: "ADMINISTRADOR" };
 
-  // Manejo de fecha opcional sin romper TO_DATE de Oracle
+  const autorId = toPositiveNumber(user.id || user.userId || user.id_usuario);
+  const rolAutor = normalizarRol(user.rol || user.role);
+
+  const titulo = String(datos.titulo || "").trim();
+  const contenido = String(datos.contenido || "").trim();
+
+  if (!titulo || !contenido) {
+    throw crearError("El título y el contenido del comunicado son requeridos.");
+  }
+
+  const idUsuarioDestino = toPositiveNumber(
+    datos.idUsuarioDestino ?? datos.id_usuario_destino
+  );
+  const idCasaDestino = toPositiveNumber(
+    datos.idCasaDestino ?? datos.id_casa_destino
+  );
+
+  const tipoDestinatario = normalizarTipoDestinatario(
+    datos.tipoDestinatario ?? datos.tipo_destinatario,
+    idUsuarioDestino ? TIPOS_DESTINATARIO.ESPECIFICO : TIPOS_DESTINATARIO.TODOS
+  );
+
+  if (
+    tipoDestinatario === TIPOS_DESTINATARIO.ESPECIFICO &&
+    !idUsuarioDestino
+  ) {
+    throw crearError("Debe seleccionar el usuario específico que recibirá el aviso.");
+  }
+
+  if (
+    ["ADMIN", "ADMINISTRADOR"].includes(rolAutor) &&
+    tipoDestinatario === TIPOS_DESTINATARIO.ADMINISTRADOR
+  ) {
+    throw crearError(
+      "El administrador no puede enviarse un aviso a sí mismo. Seleccione otro destinatario."
+    );
+  }
+
+  const rolDestino =
+    normalizarRol(datos.rolDestino ?? datos.rol_destino) ||
+    (await resolverRolDestino(tipoDestinatario, idUsuarioDestino));
+
+  const canalSolicitado = String(datos.canalEnvio ?? datos.canal_envio ?? "APP")
+    .trim()
+    .toUpperCase();
+  const canalEnvio = CANALES_VALIDOS.includes(canalSolicitado)
+    ? canalSolicitado
+    : "APP";
+  const enviarWhatsAppFlag = parseBoolean(
+    datos.enviarWhatsApp ?? datos.enviar_whatsapp
+  );
+
   const sqlInsert = `
-    INSERT INTO COMUNICADO 
-      (id_usuario, id_casa_destino, titulo, contenido, canal_envio, fecha_vencimiento)
-    VALUES 
-      (:adminId, :idCasa, :titulo, :contenido, :canal, 
-       CASE WHEN :fechaVenc IS NOT NULL THEN TO_DATE(:fechaVenc, 'YYYY-MM-DD') ELSE NULL END)`;
+    INSERT INTO COMUNICADO
+      (
+        id_usuario,
+        id_casa_destino,
+        id_usuario_destino,
+        tipo_destinatario,
+        rol_destino,
+        titulo,
+        contenido,
+        canal_envio,
+        enviar_whatsapp,
+        fecha_vencimiento
+      )
+    VALUES
+      (
+        :autorId,
+        :idCasaDestino,
+        :idUsuarioDestino,
+        :tipoDestinatario,
+        :rolDestino,
+        :titulo,
+        :contenido,
+        :canalEnvio,
+        :enviarWhatsApp,
+        CASE WHEN :fechaVenc IS NOT NULL THEN TO_DATE(:fechaVenc, 'YYYY-MM-DD') ELSE NULL END
+      )
+    RETURNING id_comunicado INTO :idComunicadoOut`;
 
   const bindParams = {
-    adminId: Number(adminId || 1),
-    idCasa: idCasaDestino ? Number(idCasaDestino) : null,
-    titulo: String(titulo),
-    contenido: String(contenido),
-    canal: canalEnvio || "APP",
-    fechaVenc: fechaVencimiento || null
+    autorId: autorId || 1,
+    idCasaDestino,
+    idUsuarioDestino,
+    tipoDestinatario,
+    rolDestino,
+    titulo,
+    contenido,
+    canalEnvio,
+    enviarWhatsApp: enviarWhatsAppFlag ? "SI" : "NO",
+    fechaVenc: datos.fechaVencimiento || datos.fecha_vencimiento || null,
+    idComunicadoOut: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
   };
 
-  await db.executeQuery(sqlInsert, bindParams);
+  const resultado = await db.executeQuery(sqlInsert, bindParams, {
+    autoCommit: true,
+  });
 
-  // Despacho de notificaciones por Email / WhatsApp si aplica
-  if (canalEnvio && canalEnvio !== "APP") {
+  const idComunicado = resultado.outBinds?.idComunicadoOut?.[0] || null;
+
+  let notificaciones = null;
+  const requiereEnvio =
+    enviarWhatsAppFlag ||
+    ["EMAIL", "WHATSAPP", "AMBOS", "TODOS"].includes(canalEnvio);
+
+  if (requiereEnvio) {
     try {
-      let sqlDestinatarios = `
-        SELECT p.correo, p.telefono, u.nombre_usuario 
-        FROM USUARIO u
-        JOIN PERSONA p ON u.id_persona = p.id_persona
-        WHERE u.es_verificado = 'SI'`;
+      const destinatarios = await obtenerDestinatarios({
+        tipoDestinatario,
+        rolDestino,
+        idUsuarioDestino,
+      });
 
-      const queryParams = {};
-
-      if (idUsuarioDestino) {
-        sqlDestinatarios += ` AND u.id_usuario = :idUsuario`;
-        queryParams.idUsuario = Number(idUsuarioDestino);
-      }
-
-      const resDest = await db.executeQuery(sqlDestinatarios, queryParams);
-      const usuarios = resDest.rows || resDest.data || resDest || [];
-
-      for (const usr of usuarios) {
-        const correo = usr.CORREO || usr.correo;
-        const telefono = usr.TELEFONO || usr.telefono;
-
-        // Envío por correo electrónico
-        if (["EMAIL", "AMBOS", "TODOS"].includes(canalEnvio) && correo) {
-          sendEmail({
-            to: correo,
-            subject: `[Aviso Condominio] ${titulo}`,
-            text: contenido,
-            html: `<h3>${titulo}</h3><p>${contenido}</p>`
-          }).catch((err) => console.error(`Error enviando email a ${correo}:`, err));
-        }
-
-        // Envío por WhatsApp
-        if (["WHATSAPP", "AMBOS", "TODOS"].includes(canalEnvio) && telefono) {
-          sendWhatsApp({
-            to: telefono,
-            message: `*Aviso Importante - Condominio*\n\n*${titulo}*\n${contenido}`
-          }).catch((err) => console.error(`Error enviando WhatsApp a ${telefono}:`, err));
-        }
-      }
-    } catch (errNotif) {
-      console.error("Error al procesar envíos secundarios de notificaciones:", errNotif.message);
+      notificaciones = await enviarNotificaciones({
+        destinatarios,
+        titulo,
+        contenido,
+        canalEnvio,
+        enviarWhatsApp: enviarWhatsAppFlag,
+        origen: "COMUNICADO",
+      });
+    } catch (errorNotificacion) {
+      // Un fallo de email/WhatsApp nunca debe revertir el aviso ya guardado.
+      console.log(
+        `[Comunicados] El aviso ${idComunicado} se guardó, pero falló el despacho de notificaciones: ${errorNotificacion.message}`
+      );
     }
   }
 
   return {
-    message: "Comunicado emitido y notificaciones procesadas correctamente."
+    idComunicado,
+    tipoDestinatario,
+    rolDestino,
+    canalEnvio,
+    enviarWhatsApp: enviarWhatsAppFlag,
+    notificaciones,
+    message: "Comunicado emitido y notificaciones procesadas correctamente.",
   };
 };
 
 /**
- * Marca un comunicado como INACTIVO en la base de datos.
+ * Marca un comunicado como INACTIVO.
  */
 exports.desactivarComunicado = async (idComunicado) => {
-  const sql = `UPDATE COMUNICADO SET estado = 'INACTIVO' WHERE id_comunicado = :idComunicado`;
-  await db.executeQuery(sql, { idComunicado: Number(idComunicado) });
+  const id = toPositiveNumber(idComunicado);
+  if (!id) throw crearError("El identificador del comunicado no es válido.");
+
+  await db.executeQuery(
+    `UPDATE COMUNICADO SET estado = 'INACTIVO' WHERE id_comunicado = :idComunicado`,
+    { idComunicado: id },
+    { autoCommit: true }
+  );
+
   return { message: "Comunicado inactivado con éxito." };
 };
+
+/**
+ * Catálogo de usuarios disponibles para el selector de destinatario.
+ */
+exports.obtenerUsuariosDestino = async () => listarUsuariosDestino();

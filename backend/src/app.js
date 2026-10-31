@@ -16,6 +16,7 @@ const authRoutes = require("./modules/auth/auth.routes");
 const casasRoutes = require("./modules/casas/casas.routes");
 const pagosRoutes = require("./modules/pagos/pagos.routes");
 const notificacionesRoutes = require("./modules/notificaciones/notificaciones.routes");
+const quejasRoutes = require("./modules/quejas/quejas.routes");
 const seguridadRoutes = require("./modules/seguridad/seguridad.routes");
 const usuariosRoutes = require("./modules/usuarios/usuarios.routes");
 const visitasRoutes = require("./modules/visitas/visitas.routes");
@@ -51,7 +52,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/casas", casasRoutes);
 app.use("/api/pagos", pagosRoutes);
 app.use("/api/notificaciones", notificacionesRoutes);
-app.use("/api/quejas", notificacionesRoutes); // Alias para solicitudes de quejas y buzón
+app.use("/api/comunicados", notificacionesRoutes); // Alias semántico para avisos/circulares
+app.use("/api/quejas", quejasRoutes); // Buzón de quejas y sugerencias (módulo independiente)
 app.use("/api/seguridad", seguridadRoutes);
 app.use("/api/usuarios", usuariosRoutes);
 app.use("/api/visitas", visitasRoutes);

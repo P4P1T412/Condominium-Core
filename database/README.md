@@ -31,8 +31,12 @@ DBeaver (u otro cliente SQL de tu preferencia).
 
 > **¿Ya tenías tu base creada?** No vuelvas a correr `01_schema.sql` (fallará porque
 > las tablas ya existen). Aplica únicamente las migraciones pendientes de `ddl/`
-> (por ejemplo `05_migration_visitas_comunicados.sql`). Estos scripts son
-> idempotentes: agregan solo lo que falta y no borran datos.
+> (por ejemplo `05_migration_visitas_comunicados.sql` y
+> `06_migration_comunicaciones_destinatarios.sql`). La migración `05` es
+> idempotente. La `06` son `ALTER TABLE` directos: ejecútala una sola vez y, si
+> repites una sentencia sobre un objeto que ya existe, ignora el error
+> `ORA-01430` (columna existente), `ORA-01451` (columna ya nullable),
+> `ORA-02264` (restricción existente) u `ORA-02275` (llave foránea existente).
 
 ## Comandos útiles del contenedor
 

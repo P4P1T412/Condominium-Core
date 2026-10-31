@@ -233,21 +233,29 @@ src/modules/pagos/
 
 ```
 src/modules/notificaciones/
-├── ComunicacionesPage.jsx  → arma el <Tabs> (vista administrador)
-├── AvisosCirculares.jsx
-└── BuzonQuejas.jsx
+└── Notificaciones.jsx      → página única con <Tabs> "Avisos" y "Quejas"
 ```
 
+> La pantalla es la misma para administrador, garita y condómino; el rol cambia las
+> acciones disponibles (por ejemplo, solo el administrador puede publicar avisos) y el
+> filtrado de datos lo resuelve el backend.
+
 ### Pestaña 1 — Avisos y Circulares
-- Lista de publicaciones ya emitidas por la administración (a todo el condominio o a
-  una casa puntual).
-- Formulario para crear un nuevo comunicado: título, contenido, y selector de
-  destinatario (todo el condominio / una casa específica).
+- Lista de publicaciones ya emitidas y visibles para el usuario según su rol/casa.
+- Formulario (solo administrador): título, contenido, destinatario y envío por
+  WhatsApp. Tipos de destinatario: `TODOS`, `CONDOMINOS`, `GARITA`, `ESPECIFICO`.
+  La opción `ADMINISTRADOR` se oculta para administradores porque no pueden enviarse
+  avisos a sí mismos.
+- Endpoints: `GET /api/notificaciones`, `POST /api/notificaciones` (administrador),
+  `PATCH /api/notificaciones/:id/desactivar` (administrador). También disponible como
+  `GET/POST /api/comunicados`.
 
 ### Pestaña 2 — Buzón de Reportes / Quejas
-- Lista de incidencias enviadas por condóminos.
-- Selector de estado por fila: `<StatusBadge status="PENDIENTE" />` /
-  `EN_PROCESO` / `RESUELTO`, editable por el administrador.
+- Lista de incidencias. El condómino solo ve las suyas; administrador y garita ven todas.
+- Cualquier usuario autenticado puede crear una queja o sugerencia (`POST /api/quejas`),
+  con destinatario (`TODOS`, `ADMINISTRADOR`, `CONDOMINOS`, `GARITA`, `ESPECIFICO`) y
+  envío opcional por WhatsApp.
+- Catálogo para el selector de usuario específico: `GET /api/quejas/usuarios`.
 
 ---
 
