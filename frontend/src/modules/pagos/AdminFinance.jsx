@@ -184,7 +184,7 @@ function GeneralStatementTab() {
         <div className="finance-list">
           {rows.map((row) => (
             <div className="finance-row" key={row.idCasa}>
-              <div><div className="finance-strong">Casa {row.casa}</div><div className="finance-muted">{row.propietario}</div></div>
+              <div><div className="finance-strong">Casa {row.casa}</div></div>
               <div>Cargos: <strong>{money(row.cargos)}</strong></div>
               <div>Pagado: <strong>{money(row.pagado)}</strong><br />Saldo: <strong>{money(row.saldo)}</strong></div>
               <span className={`finance-badge ${row.estado === "MOROSO" ? "danger" : row.estado === "PENDIENTE" ? "warning" : ""}`}>{row.estado}</span>
