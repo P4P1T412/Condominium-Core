@@ -17,3 +17,6 @@ backend/uploads/
 .DS_Store
 .vscode/
 *.log
+
+# Documento de relevo técnico entre sesiones (local, no se sube al repo)
+parte.md
