@@ -12,13 +12,10 @@ const xlsx = require("xlsx");
 const { executeQuery, withTransaction } = require("../../config/db");
 
 /**
- * Obtiene el listado consolidado de casas con información de propietarios y residentes.
- * 
- * @param {object} filters Opciones de filtrado (estado, bloque).
- * @returns {Promise<Array>} Lista de casas con condóminos asociados.
+ * CTE base compartida por el listado, el conteo y la consulta paginada.
+ * Incluye el DPI del propietario para habilitar la búsqueda libre.
  */
-async function getAllCasas(filters = {}) {
-  let query = `
+const CASAS_CTE = `
     WITH casas_estado AS (
       SELECT
         c.id_casa,
@@ -34,6 +31,7 @@ async function getAllCasas(filters = {}) {
         c.fecha_creacion,
         p.id_persona AS id_propietario,
         p.nombres || ' ' || p.apellidos AS propietario_nombre,
+        p.dpi AS propietario_dpi,
         p.telefono AS propietario_telefono,
         p.correo AS propietario_correo,
         (SELECT COUNT(*) FROM RESIDENTE r WHERE r.id_casa = c.id_casa AND r.estado = 'ACTIVO') AS total_habitantes,
@@ -45,69 +43,186 @@ async function getAllCasas(filters = {}) {
       FROM CASA c
       JOIN PERSONA p ON c.id_propietario = p.id_persona
     )
-    SELECT * FROM casas_estado
-    WHERE 1=1
-  `;
+`;
 
+/**
+ * Construye la cláusula WHERE dinámica y sus binds, garantizando que el
+ * conteo total y la consulta paginada apliquen exactamente los mismos filtros.
+ *
+ * @param {object} filters { estado, bloque, search } ya normalizados.
+ * @returns {{ where: string, binds: object }}
+ */
+function construirFiltrosCasas({ estado, bloque, search } = {}) {
   const binds = {};
+  let where = "";
 
-  if (filters.estado) {
-    query += ` AND estado = :estado`;
-    binds.estado = filters.estado;
+  if (estado) {
+    where += ` AND estado = :estado`;
+    binds.estado = estado;
   }
 
-  if (filters.bloque) {
-    query += ` AND UPPER(bloque) = UPPER(:bloque)`;
-    binds.bloque = filters.bloque;
+  if (bloque) {
+    where += ` AND UPPER(bloque) = UPPER(:bloque)`;
+    binds.bloque = bloque;
   }
 
-  query += ` ORDER BY bloque ASC, numero_casa ASC`;
+  const texto = String(search || "").trim();
+  if (texto) {
+    where += `
+        AND (
+          UPPER(numero_casa) LIKE UPPER(:search)
+          OR UPPER(propietario_nombre) LIKE UPPER(:search)
+          OR UPPER(propietario_dpi) LIKE UPPER(:search)
+        )`;
+    binds.search = `%${texto}%`;
+  }
 
-  const result = await executeQuery(query, binds);
+  return { where, binds };
+}
+
+/**
+ * Obtiene la lista de bloques distintos existentes para poblar el selector
+ * de filtros del frontend de forma dinámica.
+ *
+ * @returns {Promise<Array<string>>} Bloques ordenados ascendentemente.
+ */
+async function getBloques() {
+  const result = await executeQuery(
+    `SELECT DISTINCT bloque FROM CASA WHERE bloque IS NOT NULL ORDER BY bloque ASC`,
+    {}
+  );
   const rows = result.rows || result.data || result || [];
 
-  return rows.map((row) => {
-    const idCasa = row.ID_CASA ?? row.id_casa;
-    const numeroCasa = row.NUMERO_CASA ?? row.numero_casa;
-    const bloque = row.BLOQUE ?? row.bloque;
-    const direccion = row.DIRECCION ?? row.direccion;
-    const estado = row.ESTADO ?? row.estado;
-    const totalHabitantes = row.TOTAL_HABITANTES ?? row.total_habitantes ?? 0;
-    const fechaCreacion = row.FECHA_CREACION ?? row.fecha_creacion;
-    const idPropietario = row.ID_PROPIETARIO ?? row.id_propietario;
-    const propietarioNombre = row.PROPIETARIO_NOMBRE ?? row.propietario_nombre ?? "Propietario Sin Nombre";
-    const propietarioTelefono = row.PROPIETARIO_TELEFONO ?? row.propietario_telefono;
-    const propietarioCorreo = row.PROPIETARIO_CORREO ?? row.propietario_correo;
-    const idResidentePrincipal = row.ID_RESIDENTE_PRINCIPAL ?? row.id_residente_principal;
+  return rows
+    .map((row) => (Array.isArray(row) ? row[0] : row.BLOQUE ?? row.bloque))
+    .filter((bloque) => bloque !== null && bloque !== undefined && String(bloque).trim() !== "");
+}
 
-    return {
-      id: idCasa,
-      id_casa: idCasa,
-      ID_CASA: idCasa,
-      numeroCasa: numeroCasa,
-      numero_casa: numeroCasa,
-      NUMERO_CASA: numeroCasa,
-      bloque: bloque,
-      BLOQUE: bloque,
-      direccion: direccion,
-      DIRECCION: direccion,
-      estado: estado,
-      ESTADO: estado,
-      totalHabitantes: totalHabitantes,
-      id_residente: idResidentePrincipal,
-      ID_RESIDENTE: idResidentePrincipal,
-      nombre_condomino: propietarioNombre,
-      NOMBRE_CONDOMINO: propietarioNombre,
-      fechaCreacion: fechaCreacion,
-      propietario: {
-        id: idPropietario,
-        id_propietario: idPropietario,
-        nombre: propietarioNombre,
-        telefono: propietarioTelefono,
-        correo: propietarioCorreo,
-      },
-    };
-  });
+/**
+ * Normaliza una fila cruda de Oracle al formato canónico que consumen
+ * todos los componentes del frontend.
+ *
+ * @param {object} row Fila devuelta por la consulta.
+ * @returns {object} Casa normalizada.
+ */
+function mapCasaRow(row) {
+  const idCasa = row.ID_CASA ?? row.id_casa;
+  const numeroCasa = row.NUMERO_CASA ?? row.numero_casa;
+  const bloque = row.BLOQUE ?? row.bloque;
+  const direccion = row.DIRECCION ?? row.direccion;
+  const estado = row.ESTADO ?? row.estado;
+  const totalHabitantes = row.TOTAL_HABITANTES ?? row.total_habitantes ?? 0;
+  const fechaCreacion = row.FECHA_CREACION ?? row.fecha_creacion;
+  const idPropietario = row.ID_PROPIETARIO ?? row.id_propietario;
+  const propietarioNombre = row.PROPIETARIO_NOMBRE ?? row.propietario_nombre ?? "Propietario Sin Nombre";
+  const propietarioDpi = row.PROPIETARIO_DPI ?? row.propietario_dpi;
+  const propietarioTelefono = row.PROPIETARIO_TELEFONO ?? row.propietario_telefono;
+  const propietarioCorreo = row.PROPIETARIO_CORREO ?? row.propietario_correo;
+  const idResidentePrincipal = row.ID_RESIDENTE_PRINCIPAL ?? row.id_residente_principal;
+
+  return {
+    id: idCasa,
+    id_casa: idCasa,
+    ID_CASA: idCasa,
+    numeroCasa: numeroCasa,
+    numero_casa: numeroCasa,
+    NUMERO_CASA: numeroCasa,
+    bloque: bloque,
+    BLOQUE: bloque,
+    direccion: direccion,
+    DIRECCION: direccion,
+    estado: estado,
+    ESTADO: estado,
+    totalHabitantes: totalHabitantes,
+    id_residente: idResidentePrincipal,
+    ID_RESIDENTE: idResidentePrincipal,
+    nombre_condomino: propietarioNombre,
+    NOMBRE_CONDOMINO: propietarioNombre,
+    fechaCreacion: fechaCreacion,
+    propietario: {
+      id: idPropietario,
+      id_propietario: idPropietario,
+      nombre: propietarioNombre,
+      dpi: propietarioDpi,
+      telefono: propietarioTelefono,
+      correo: propietarioCorreo,
+    },
+  };
+}
+
+/**
+ * Obtiene el listado consolidado de casas con información de propietarios y residentes.
+ *
+ * Modos soportados:
+ *   - Paginado (`paginado: true`): calcula el total real con COUNT(*) y
+ *     devuelve solo la página solicitada usando OFFSET/FETCH de Oracle.
+ *   - Completo (default): devuelve todas las casas coincidentes para
+ *     compatibilidad con selectores y modales (Censo Familiar, Visitas, etc.).
+ *
+ * @param {object} filters Opciones: estado, bloque, search, paginado, page, limit.
+ * @returns {Promise<{data: Array, bloques: Array<string>, pagination: object|null}>}
+ */
+async function getAllCasas(filters = {}) {
+  const { estado, bloque, search, paginado = false } = filters;
+  const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0
+    ? Math.floor(Number(filters.limit))
+    : 9;
+  const page = Number.isFinite(Number(filters.page)) && Number(filters.page) > 0
+    ? Math.floor(Number(filters.page))
+    : 1;
+
+  const { where, binds } = construirFiltrosCasas({ estado, bloque, search });
+
+  // Catálogo de bloques para el selector dinámico del frontend
+  const bloques = await getBloques();
+
+  if (!paginado) {
+    const query = `${CASAS_CTE}
+    SELECT * FROM casas_estado
+    WHERE 1=1${where}
+    ORDER BY bloque ASC, numero_casa ASC
+  `;
+
+    const result = await executeQuery(query, binds);
+    const rows = result.rows || result.data || result || [];
+
+    return { data: rows.map(mapCasaRow), bloques, pagination: null };
+  }
+
+  // 1. Total real de registros que coinciden con los filtros aplicados
+  const countQuery = `${CASAS_CTE}
+    SELECT COUNT(*) AS TOTAL FROM casas_estado
+    WHERE 1=1${where}
+  `;
+  const countResult = await executeQuery(countQuery, binds);
+  const filaTotal = (countResult.rows || countResult.data || [])[0] || {};
+  const total = Number(filaTotal.TOTAL ?? filaTotal.total ?? 0);
+
+  // Se recorta la página solicitada al rango válido para evitar páginas vacías
+  const totalPages = Math.max(Math.ceil(total / limit), 1);
+  const paginaActual = Math.min(Math.max(page, 1), totalPages);
+  const offset = (paginaActual - 1) * limit;
+
+  // 2. Página solicitada con sintaxis estándar de Oracle
+  const dataQuery = `${CASAS_CTE}
+    SELECT * FROM casas_estado
+    WHERE 1=1${where}
+    ORDER BY bloque ASC, numero_casa ASC
+    OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
+  `;
+  const dataResult = await executeQuery(dataQuery, { ...binds, offset, limit });
+  const rows = dataResult.rows || dataResult.data || dataResult || [];
+
+  return {
+    data: rows.map(mapCasaRow),
+    bloques,
+    pagination: {
+      total,
+      page: paginaActual,
+      limit,
+      totalPages,
+    },
+  };
 }
 
 /**

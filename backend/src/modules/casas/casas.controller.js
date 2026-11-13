@@ -6,11 +6,86 @@
 
 const casasService = require("./casas.service");
 
+/**
+ * Normaliza un filtro de catálogo (bloque / estado): descarta valores
+ * vacíos y el comodín "TODOS" enviado por los selectores del frontend.
+ *
+ * @param {string|undefined} valor Valor crudo del query string.
+ * @returns {string|undefined} Valor limpio o undefined si no filtra.
+ */
+function normalizarFiltroCatalogo(valor) {
+  const limpio = String(valor ?? "").trim();
+  if (!limpio || limpio.toUpperCase() === "TODOS") return undefined;
+  return limpio;
+}
+
+/**
+ * Convierte un entero del query string en un número dentro de un rango seguro.
+ */
+function parsearEntero(valor, predeterminado, { min, max }) {
+  const numero = parseInt(String(valor ?? "").trim(), 10);
+  if (!Number.isFinite(numero)) return predeterminado;
+  return Math.min(Math.max(numero, min), max);
+}
+
+/**
+ * GET /api/casas
+ *
+ * Soporta paginación real del lado del servidor y filtros dinámicos:
+ *   - page (default 1), limit (default 9)
+ *   - search  → número de casa, nombre del propietario o DPI
+ *   - bloque  → exacto (se ignora vacío o "TODOS")
+ *   - estado  → exacto (se ignora vacío o "TODOS")
+ *   - all=true → devuelve todas las casas sin paginar (compatibilidad con
+ *     selectores y modales de otros módulos: Censo Familiar, Visitas, etc.)
+ *
+ * Sin parámetros de paginación mantiene el formato histórico
+ * `{ success, data: [...] }` con el listado completo.
+ */
 async function getCasas(req, res, next) {
   try {
-    const { estado, bloque } = req.query;
-    const casas = await casasService.getAllCasas({ estado, bloque });
-    return res.status(200).json({ success: true, data: casas });
+    const { estado, bloque, search, all, page, limit } = req.query;
+
+    const filtros = {};
+    const bloqueFiltro = normalizarFiltroCatalogo(bloque);
+    const estadoFiltro = normalizarFiltroCatalogo(estado);
+    const searchFiltro = String(search ?? "").trim();
+
+    if (bloqueFiltro) filtros.bloque = bloqueFiltro;
+    if (estadoFiltro) filtros.estado = estadoFiltro;
+    if (searchFiltro) filtros.search = searchFiltro;
+
+    const todos = String(all ?? "").toLowerCase() === "true";
+
+    // Solo se pagina si el cliente lo pide explícitamente (page/limit) o
+    // cuando no solicita el listado completo con all=true.
+    const paginado = !todos && (page !== undefined || limit !== undefined);
+
+    let pageParsed = 1;
+    let limitParsed = 9;
+    if (paginado) {
+      pageParsed = parsearEntero(page, 1, { min: 1, max: Number.MAX_SAFE_INTEGER });
+      limitParsed = parsearEntero(limit, 9, { min: 1, max: 100 });
+    }
+
+    const resultado = await casasService.getAllCasas({
+      ...filtros,
+      paginado,
+      page: pageParsed,
+      limit: limitParsed,
+    });
+
+    const respuesta = {
+      success: true,
+      data: resultado.data,
+      bloques: resultado.bloques,
+    };
+
+    if (paginado && resultado.pagination) {
+      respuesta.pagination = resultado.pagination;
+    }
+
+    return res.status(200).json(respuesta);
   } catch (error) {
     next(error);
   }

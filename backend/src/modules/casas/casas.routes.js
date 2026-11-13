@@ -71,6 +71,12 @@ router.post(
 );
 
 // Consultas (Administrador, Garita o Condómino para autogestión)
+// Accesible en: GET /api/casas
+// Query params opcionales:
+//   page (default 1), limit (default 9), search, bloque, estado y all=true.
+//   Con page/limit responde { data, pagination, bloques } (paginado).
+//   Sin ellos (o con all=true) conserva el formato histórico { data: [...] }
+//   con el listado completo para no romper selectores de otros módulos.
 router.get("/", requireRole("ADMINISTRADOR", "GARITA", "CONDOMINO"), casasController.getCasas);
 router.get("/:id", requireRole("ADMINISTRADOR", "GARITA", "CONDOMINO"), casasController.getCasa);
 

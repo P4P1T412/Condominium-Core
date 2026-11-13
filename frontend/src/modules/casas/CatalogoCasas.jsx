@@ -5,8 +5,13 @@ import {
   AlertTriangle,
   CheckCircle2,
   Download,
+  Eye,
   FileSpreadsheet,
+  LayoutGrid,
+  List,
   Loader2,
+  Pencil,
+  Search,
   Upload,
   X,
 } from "lucide-react";
@@ -21,11 +26,83 @@ const CAMPOS_PLANTILLA = [
   { columna: "DPI / Id Propietario", obligatoria: "No", ejemplo: "1234567890101" },
 ];
 
+// ---------------------------------------------------------------------------
+// Doble vista (Tarjetas / Lista) y reglas de paginación
+// ---------------------------------------------------------------------------
+const CLAVE_VISTA = "casas_view_mode";
+const VISTA_TARJETAS = "tarjetas";
+const VISTA_LISTA = "lista";
+
+// 9 tarjetas = cuadrícula de 3 × 3 · 15 filas = tabla compacta
+const LIMITE_POR_VISTA = { [VISTA_TARJETAS]: 9, [VISTA_LISTA]: 15 };
+const ESTADOS_CASA = ["OCUPADA", "DISPONIBLE", "INACTIVA"];
+
+/** Lee la preferencia de vista persistida por el administrador. */
+function leerVistaGuardada() {
+  try {
+    return localStorage.getItem(CLAVE_VISTA) === VISTA_LISTA ? VISTA_LISTA : VISTA_TARJETAS;
+  } catch {
+    return VISTA_TARJETAS;
+  }
+}
+
+/**
+ * Estado visual calculado a partir del censo: la cantidad de residentes
+ * activos es la fuente de verdad de la ocupación de la vivienda.
+ */
+function estadoVisualCasa(casa) {
+  if (casa.estado === "INACTIVA") return "INACTIVA";
+  return Number(casa.totalHabitantes) > 0 ? "OCUPADA" : "DISPONIBLE";
+}
+
+/** Evita subtítulos redundantes como "Bloque BLOQUE A". */
+function formatearBloque(bloque) {
+  const texto = String(bloque || "").trim();
+  if (!texto) return "Sin bloque";
+  return /^bloque/i.test(texto) ? texto : `Bloque ${texto}`;
+}
+
+/**
+ * Ventana inteligente de números de página:
+ * ej. 1 ... 4 5 6 ... 45
+ */
+function obtenerPaginasVisibles(actual, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+  const candidatas = new Set([1, total, actual - 1, actual, actual + 1]);
+  const paginas = [...candidatas]
+    .filter((pagina) => pagina >= 1 && pagina <= total)
+    .sort((a, b) => a - b);
+
+  const resultado = [];
+  let anterior = 0;
+  paginas.forEach((pagina) => {
+    if (pagina - anterior > 1) resultado.push("...");
+    resultado.push(pagina);
+    anterior = pagina;
+  });
+  return resultado;
+}
+
 export default function CatalogoCasas() {
   const [casas, setCasas] = useState([]);
   const [personas, setPersonas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Paginación real del lado del servidor y filtros dinámicos
+  const [page, setPage] = useState(1);
+  const [searchText, setSearchText] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [bloqueFilter, setBloqueFilter] = useState("");
+  const [estadoFilter, setEstadoFilter] = useState("");
+  const [bloques, setBloques] = useState([]);
+  const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 9, totalPages: 1 });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Doble vista: tarjetas o lista (persistida en localStorage)
+  const [viewMode, setViewMode] = useState(leerVistaGuardada);
+  const limit = LIMITE_POR_VISTA[viewMode] ?? 9;
 
   const [selectedCasa, setSelectedCasa] = useState(null);
 
@@ -54,33 +131,122 @@ export default function CatalogoCasas() {
     totalHabitantes: 0,
   });
 
+  // Debounce del buscador (400 ms): evita una petición por cada tecla y
+  // reinicia automáticamente a la página 1 cuando el texto cambia.
   useEffect(() => {
-    cargarDatosIniciales();
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchText.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+
+  // Catálogo de personas para los selectores de propietario (solo al montar)
+  useEffect(() => {
+    cargarPersonas();
   }, []);
 
-  async function cargarDatosIniciales() {
-    setLoading(true);
-    setError("");
-    try {
-      const [resCasas, resPersonas] = await Promise.allSettled([
-        api.get("/casas"),
-        api.get("/casas/personas"),
-      ]);
+  // Listado de casas según página, vista y filtros activos.
+  // La función vive dentro del efecto para declarar las dependencias de
+  // forma explícita; la bandera "cancelado" descarta las respuestas
+  // obsoletas cuando el usuario cambia de página o de filtro.
+  useEffect(() => {
+    let cancelado = false;
 
-      if (resCasas.status === "fulfilled" && resCasas.value.data?.success) {
-        setCasas(resCasas.value.data.data);
-      } else {
-        setError("No fue posible cargar el listado de casas.");
-      }
+    async function cargarCasas() {
+      setLoading(true);
+      setError("");
+      try {
+        const params = { page, limit };
+        if (debouncedSearch) params.search = debouncedSearch;
+        if (bloqueFilter) params.bloque = bloqueFilter;
+        if (estadoFilter) params.estado = estadoFilter;
 
-      if (resPersonas.status === "fulfilled" && resPersonas.value.data?.success) {
-        setPersonas(resPersonas.value.data.data);
+        const response = await api.get("/casas", { params });
+        if (cancelado) return;
+
+        if (response.data?.success) {
+          setCasas(response.data.data || []);
+          setBloques(response.data.bloques || []);
+
+          const paginacion = response.data.pagination;
+          if (paginacion) {
+            // Si el backend recortó la página (ej. tras guardar o eliminar),
+            // se sincroniza el estado para no mostrar una página vacía.
+            if (paginacion.page !== page) setPage(paginacion.page);
+            setPagination(paginacion);
+          } else {
+            const total = response.data.data?.length || 0;
+            setPagination({ total, page: 1, limit: total || 1, totalPages: 1 });
+          }
+        } else {
+          setError("No fue posible cargar el listado de casas.");
+        }
+      } catch {
+        if (!cancelado) setError("Error de comunicación al consultar el servidor.");
+      } finally {
+        if (!cancelado) setLoading(false);
       }
-    } catch (err) {
-      setError("Error de comunicación al consultar el servidor.");
-    } finally {
-      setLoading(false);
     }
+
+    cargarCasas();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [page, debouncedSearch, bloqueFilter, estadoFilter, limit, refreshKey]);
+
+  /**
+   * Recarga el catálogo de personas para los dropdowns de propietario.
+   */
+  async function cargarPersonas() {
+    try {
+      const response = await api.get("/casas/personas");
+      if (response.data?.success) setPersonas(response.data.data || []);
+    } catch {
+      // El padrón de personas es secundario: no bloquea el listado de casas.
+    }
+  }
+
+  /**
+   * Recarga la página actual conservando búsqueda y filtros.
+   * Lo usan los modales de Crear, Editar y Carga Masiva tras guardar.
+   */
+  function recargarCatalogo() {
+    setRefreshKey((clave) => clave + 1);
+  }
+
+  function cambiarBusqueda(evento) {
+    setSearchText(evento.target.value);
+  }
+
+  function limpiarBusqueda() {
+    setSearchText("");
+  }
+
+  function cambiarBloque(evento) {
+    setBloqueFilter(evento.target.value);
+    setPage(1);
+  }
+
+  function cambiarEstado(evento) {
+    setEstadoFilter(evento.target.value);
+    setPage(1);
+  }
+
+  function cambiarVista(modo) {
+    if (modo === viewMode) return;
+    setViewMode(modo);
+    setPage(1);
+    try {
+      localStorage.setItem(CLAVE_VISTA, modo);
+    } catch {
+      // localStorage no disponible: la vista se mantiene solo en memoria.
+    }
+  }
+
+  function hayFiltrosActivos() {
+    return Boolean(debouncedSearch || bloqueFilter || estadoFilter);
   }
 
   async function verExpediente(idCasa) {
@@ -149,7 +315,8 @@ export default function CatalogoCasas() {
 
       if (response.data && response.data.success) {
         setShowModal(false);
-        cargarDatosIniciales();
+        // Recarga la página actual (conservando filtros) para ver el cambio
+        recargarCatalogo();
       }
     } catch (err) {
       alert(err.response?.data?.message || "Ocurrió un error al guardar la vivienda.");
@@ -180,8 +347,8 @@ export default function CatalogoCasas() {
     setBulkOwnerId("");
     setBulkDragging(false);
     setShowTemplate(false);
-    // Refresca el catálogo al cerrar el modal
-    cargarDatosIniciales();
+    // Refresca la página actual del catálogo al cerrar el modal
+    recargarCatalogo();
   }
 
   function seleccionarArchivoExcel(file) {
@@ -271,15 +438,26 @@ export default function CatalogoCasas() {
     }
   }
 
+  // Valores derivados para el pie de paginación
+  const desde = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const hasta = Math.min(pagination.page * pagination.limit, pagination.total);
+  const paginasVisibles = obtenerPaginasVisibles(pagination.page, pagination.totalPages);
+
   return (
     <div style={styles.container}>
       {/* Barra de herramientas */}
       <div style={styles.toolbar}>
         <span style={styles.counter}>
-          Total de viviendas registradas: <strong>{casas.length}</strong>
+          Total de viviendas registradas: <strong>{pagination.total}</strong>
         </span>
         <div style={styles.actions}>
-          <button onClick={cargarDatosIniciales} style={styles.btnSecondary}>
+          <button
+            onClick={() => {
+              recargarCatalogo();
+              cargarPersonas();
+            }}
+            style={styles.btnSecondary}
+          >
             Actualizar lista
           </button>
           <button onClick={abrirModalCargaMasiva} style={styles.btnExcel}>
@@ -292,31 +470,164 @@ export default function CatalogoCasas() {
         </div>
       </div>
 
+      {/* Barra unificada: buscador con debounce, filtros y selector de vista */}
+      <div style={styles.filterBar}>
+        <div style={styles.searchWrapper}>
+          <Search size={15} style={styles.searchIcon} />
+          <input
+            type="text"
+            value={searchText}
+            onChange={cambiarBusqueda}
+            placeholder="Buscar por número de casa, propietario o DPI..."
+            aria-label="Buscar viviendas"
+            style={styles.searchInput}
+          />
+          {searchText && (
+            <button
+              type="button"
+              onClick={limpiarBusqueda}
+              title="Limpiar búsqueda"
+              aria-label="Limpiar búsqueda"
+              style={styles.searchClear}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        <select
+          value={bloqueFilter}
+          onChange={cambiarBloque}
+          aria-label="Filtrar por bloque"
+          style={styles.filterSelect}
+        >
+          <option value="">Todos los bloques</option>
+          {bloques.map((bloque) => (
+            <option key={bloque} value={bloque}>
+              {bloque}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={estadoFilter}
+          onChange={cambiarEstado}
+          aria-label="Filtrar por estado"
+          style={styles.filterSelect}
+        >
+          <option value="">Todos los estados</option>
+          {ESTADOS_CASA.map((estado) => (
+            <option key={estado} value={estado}>
+              {estado}
+            </option>
+          ))}
+        </select>
+
+        <div style={styles.viewToggle} role="group" aria-label="Selector de vista">
+          <button
+            type="button"
+            onClick={() => cambiarVista(VISTA_TARJETAS)}
+            title="Vista de tarjetas"
+            style={{
+              ...styles.viewBtn,
+              ...(viewMode === VISTA_TARJETAS ? styles.viewBtnActive : {}),
+            }}
+          >
+            <LayoutGrid size={15} />
+            Tarjetas
+          </button>
+          <button
+            type="button"
+            onClick={() => cambiarVista(VISTA_LISTA)}
+            title="Vista de lista"
+            style={{
+              ...styles.viewBtn,
+              ...(viewMode === VISTA_LISTA ? styles.viewBtnActive : {}),
+            }}
+          >
+            <List size={15} />
+            Lista
+          </button>
+        </div>
+      </div>
+
       {error && <div style={styles.alertError}>{error}</div>}
 
       {loading ? (
         <div style={styles.emptyState}>Cargando catálogo residencial...</div>
       ) : casas.length === 0 ? (
-        <div style={styles.emptyState}>No hay viviendas registradas en el sistema.</div>
+        <div style={styles.emptyState}>
+          {hayFiltrosActivos()
+            ? "No se encontraron viviendas que coincidan con los filtros aplicados."
+            : "No hay viviendas registradas en el sistema."}
+        </div>
+      ) : viewMode === VISTA_LISTA ? (
+        /* ------------------------- VISTA LISTA ------------------------- */
+        <div style={styles.tableWrapper}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Casa / Número</th>
+                <th style={styles.th}>Bloque</th>
+                <th style={styles.th}>Dirección</th>
+                <th style={styles.th}>Propietario Titular</th>
+                <th style={styles.th}>Habitantes</th>
+                <th style={styles.th}>Estado</th>
+                <th style={{ ...styles.th, textAlign: "right" }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {casas.map((casa) => (
+                <tr key={casa.id} style={styles.tr}>
+                  <td style={{ ...styles.td, fontWeight: 700 }}>{casa.numeroCasa}</td>
+                  <td style={styles.td}>{casa.bloque || "—"}</td>
+                  <td style={{ ...styles.td, ...styles.cellEllipsis }}>
+                    {casa.direccion || "—"}
+                  </td>
+                  <td style={styles.td}>
+                    {casa.propietario?.nombre || "Sin propietario asignado"}
+                  </td>
+                  <td style={styles.td}>
+                    {casa.totalHabitantes}{" "}
+                    {Number(casa.totalHabitantes) === 1 ? "residente" : "residentes"}
+                  </td>
+                  <td style={styles.td}>
+                    <StatusBadge status={estadoVisualCasa(casa)} />
+                  </td>
+                  <td style={{ ...styles.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button
+                      onClick={() => verExpediente(casa.id)}
+                      title="Ver Expediente"
+                      aria-label="Ver Expediente"
+                      style={styles.btnIconAction}
+                    >
+                      <Eye size={15} />
+                    </button>
+                    <button
+                      onClick={() => abrirModalEditar(casa)}
+                      title="Editar Casa"
+                      aria-label="Editar Casa"
+                      style={styles.btnIconAction}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
+        /* ------------------------ VISTA TARJETAS ----------------------- */
         <div style={styles.grid}>
-          {casas.map((casa) => {
-            // El censo es la fuente de verdad: si hay habitantes activos la
-            // vivienda se muestra ocupada aunque el estado persistido esté viejo.
-            const estadoVisual = casa.estado === "INACTIVA"
-              ? "INACTIVA"
-              : Number(casa.totalHabitantes) > 0
-                ? "OCUPADA"
-                : "DISPONIBLE";
-
-            return (
+          {casas.map((casa) => (
             <div key={casa.id} style={styles.card}>
               <div style={styles.cardHeader}>
                 <div>
                   <h3 style={styles.cardTitle}>Casa {casa.numeroCasa}</h3>
-                  <span style={styles.cardSubtitle}>Bloque {casa.bloque}</span>
+                  <span style={styles.cardSubtitle}>{formatearBloque(casa.bloque)}</span>
                 </div>
-                <StatusBadge status={estadoVisual} />
+                <StatusBadge status={estadoVisualCasa(casa)} />
               </div>
 
               <div style={styles.cardBody}>
@@ -351,8 +662,60 @@ export default function CatalogoCasas() {
                 </button>
               </div>
             </div>
-            );
-          })}
+          ))}
+        </div>
+      )}
+
+      {/* Controles de paginación al pie de la vista */}
+      {!loading && pagination.total > 0 && (
+        <div style={styles.paginationBar}>
+          <span style={styles.paginationInfo}>
+            Mostrando {desde}–{hasta} de {pagination.total} viviendas
+          </span>
+          <div style={styles.paginationControls}>
+            <button
+              type="button"
+              onClick={() => setPage((pagina) => Math.max(pagina - 1, 1))}
+              disabled={pagination.page <= 1}
+              style={{
+                ...styles.paginationNavBtn,
+                ...(pagination.page <= 1 ? styles.paginationNavBtnDisabled : {}),
+              }}
+            >
+              Anterior
+            </button>
+
+            {paginasVisibles.map((item, indice) =>
+              item === "..." ? (
+                <span key={`gap-${indice}`} style={styles.pageGap}>
+                  …
+                </span>
+              ) : (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPage(item)}
+                  style={item === pagination.page ? styles.pageBtnActive : styles.pageBtn}
+                >
+                  {item}
+                </button>
+              )
+            )}
+
+            <button
+              type="button"
+              onClick={() => setPage((pagina) => pagina + 1)}
+              disabled={pagination.page >= pagination.totalPages}
+              style={{
+                ...styles.paginationNavBtn,
+                ...(pagination.page >= pagination.totalPages
+                  ? styles.paginationNavBtnDisabled
+                  : {}),
+              }}
+            >
+              Siguiente
+            </button>
+          </div>
         </div>
       )}
 
@@ -364,7 +727,7 @@ export default function CatalogoCasas() {
               <div>
                 <h2 style={styles.modalTitle}>Expediente: Casa {selectedCasa.numeroCasa}</h2>
                 <p style={styles.modalSubtitle}>
-                  Bloque {selectedCasa.bloque} — {selectedCasa.direccion}
+                  {formatearBloque(selectedCasa.bloque)} — {selectedCasa.direccion}
                 </p>
               </div>
               <button onClick={() => setSelectedCasa(null)} style={styles.modalClose}>✕</button>
@@ -835,6 +1198,178 @@ const styles = {
     flexWrap: "wrap",
     gap: "10px",
   },
+  filterBar: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    backgroundColor: "#FFFFFF",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    borderRadius: "10px",
+    padding: "10px 12px",
+    marginBottom: "18px",
+    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
+    boxSizing: "border-box",
+  },
+  searchWrapper: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    flex: "1 1 260px",
+    minWidth: "220px",
+  },
+  searchIcon: {
+    position: "absolute",
+    left: "10px",
+    color: "var(--color-text-muted, #667085)",
+    pointerEvents: "none",
+  },
+  searchInput: {
+    width: "100%",
+    padding: "8px 32px 8px 32px",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    fontSize: "13px",
+    color: "var(--color-text, #101828)",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  searchClear: {
+    position: "absolute",
+    right: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "4px",
+    background: "none",
+    border: "none",
+    color: "var(--color-text-muted, #667085)",
+    cursor: "pointer",
+  },
+  filterSelect: {
+    padding: "8px 10px",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    fontSize: "13px",
+    backgroundColor: "#FFFFFF",
+    color: "var(--color-text, #101828)",
+    minWidth: "160px",
+    maxWidth: "220px",
+    cursor: "pointer",
+    boxSizing: "border-box",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+  },
+  viewToggle: {
+    display: "flex",
+    marginLeft: "auto",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    borderRadius: "8px",
+    overflow: "hidden",
+  },
+  viewBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 12px",
+    fontSize: "13px",
+    fontWeight: "600",
+    border: "none",
+    backgroundColor: "#FFFFFF",
+    color: "var(--color-text-muted, #667085)",
+    cursor: "pointer",
+  },
+  viewBtnActive: {
+    backgroundColor: "var(--color-primary, #1B4B82)",
+    color: "#FFFFFF",
+  },
+  tableWrapper: {
+    backgroundColor: "#FFFFFF",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    borderRadius: "12px",
+    overflowX: "auto",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
+  },
+  cellEllipsis: {
+    maxWidth: "260px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  btnIconAction: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "30px",
+    height: "30px",
+    marginLeft: "6px",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    backgroundColor: "#FFFFFF",
+    color: "var(--color-text, #101828)",
+    cursor: "pointer",
+  },
+  paginationBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "12px",
+    marginTop: "18px",
+    paddingTop: "14px",
+    borderTop: "1px solid var(--color-border, #E5E7EB)",
+  },
+  paginationInfo: {
+    fontSize: "13px",
+    color: "var(--color-text-muted, #667085)",
+  },
+  paginationControls: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "6px",
+  },
+  paginationNavBtn: {
+    padding: "7px 14px",
+    fontSize: "13px",
+    fontWeight: "600",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    backgroundColor: "#FFFFFF",
+    color: "var(--color-text, #101828)",
+    cursor: "pointer",
+  },
+  paginationNavBtnDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+  pageBtn: {
+    minWidth: "32px",
+    padding: "7px 0",
+    fontSize: "13px",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border, #E5E7EB)",
+    backgroundColor: "#FFFFFF",
+    color: "var(--color-text, #101828)",
+    cursor: "pointer",
+  },
+  pageBtnActive: {
+    minWidth: "32px",
+    padding: "7px 0",
+    fontSize: "13px",
+    fontWeight: "700",
+    borderRadius: "6px",
+    border: "1px solid var(--color-primary, #1B4B82)",
+    backgroundColor: "var(--color-primary, #1B4B82)",
+    color: "#FFFFFF",
+    cursor: "pointer",
+  },
+  pageGap: {
+    padding: "0 4px",
+    fontSize: "13px",
+    color: "var(--color-text-muted, #667085)",
+  },
   btnPrimary: {
     backgroundColor: "var(--color-primary, #1B4B82)",
     color: "#FFFFFF",
@@ -857,7 +1392,8 @@ const styles = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    // Fija 3 columnas para mantener la cuadrícula de 3 × 3 con limit=9
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: "20px",
   },
   card: {
