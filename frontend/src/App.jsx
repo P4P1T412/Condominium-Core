@@ -13,6 +13,7 @@ import Garita from "./modules/seguridad/Garita";
 import ProtectedRoute from "./routes/ProtectedRoute";
 import UsuariosPage from "./modules/usuarios/UsuariosPage";
 import VisitasPage from "./modules/visitas/VisitasPage";
+import AdminDashboard from "./modules/dashboard/AdminDashboard";
 
 export default function App() {
   return (
@@ -28,6 +29,14 @@ export default function App() {
         {/* Rutas Protegidas en Layout con Sidebar */}
         <Route element={<Layout />}>
           {/* Administrador */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={["administrador"]}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/casas"
             element={

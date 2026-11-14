@@ -40,7 +40,7 @@ export default function Login() {
         const userRole = (userObj?.role || userObj?.rol || "").toLowerCase();
 
         if (userRole === "administrador" || userRole === "admin") {
-          navigate("/casas");
+          navigate("/dashboard"); // Vista inicial por defecto del administrador
         } else if (userRole === "garita") {
           navigate("/garita");
         } else {

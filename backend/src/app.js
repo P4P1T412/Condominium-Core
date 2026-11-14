@@ -20,6 +20,7 @@ const quejasRoutes = require("./modules/quejas/quejas.routes");
 const seguridadRoutes = require("./modules/seguridad/seguridad.routes");
 const usuariosRoutes = require("./modules/usuarios/usuarios.routes");
 const visitasRoutes = require("./modules/visitas/visitas.routes");
+const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 
 const app = express();
 
@@ -57,6 +58,7 @@ app.use("/api/quejas", quejasRoutes); // Buzón de quejas y sugerencias (módulo
 app.use("/api/seguridad", seguridadRoutes);
 app.use("/api/usuarios", usuariosRoutes);
 app.use("/api/visitas", visitasRoutes);
+app.use("/api/dashboard", dashboardRoutes); // Panel estratégico del administrador
 
 // Health check real contra Oracle (clave para demostración de fallas simuladas)
 app.get("/api/health", async (req, res, next) => {

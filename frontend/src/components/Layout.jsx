@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { LayoutDashboard } from "lucide-react";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -14,6 +15,11 @@ export default function Layout() {
 // Matriz de navegación acordada por rol
   const menusByRole = {
     administrador: [
+      {
+        to: "/dashboard",
+        label: "Dashboard",
+        icon: <LayoutDashboard size={20} />,
+      },
       {
         to: "/casas",
         label: "Casas y Padrón",
